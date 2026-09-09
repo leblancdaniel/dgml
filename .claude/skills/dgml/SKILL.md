@@ -294,7 +294,7 @@ semantic-labeling call assigns concept tags across all of the docset's
 documents at once (`generation.label_model`), and the result is rendered
 deterministically into namespaced `dg:chunk` XML. The labeling vocabulary
 (the "roster") is planned automatically from the documents, or pinned up
-front with `--schema-path`, which also CLOSES it (see below). Unseeded runs are staged: the largest
+front with `--schema-path`, which uses that vocabulary and no other (see below). Unseeded runs are staged: the largest
 documents label first (a pilot) and their observed evidence — verbatim
 examples, kinds, hierarchy — confirms the vocabulary the rest of the batch
 labels against. There is no separate transform pass. The pipeline is part of
@@ -363,12 +363,13 @@ done
 uv run dgml docset generate --workspace "$wid" "$ds"
 ```
 
-**Pin the vocabulary (`--schema-path`) — this CLOSES it.** Labeling is
+**Pin the vocabulary (`--schema-path`) — all or nothing.** Labeling is
 non-deterministic run-to-run; supplying a schema locks the concept vocabulary.
 The planning pass is skipped and the generated DGML uses those tag names **and
 no others**. Content whose role has no matching tag is not dropped — it renders
-as `dg:chunk` with its text, structure, and `dg:origin` intact. Pass
-`--allow-new-tags` for the old seed-plus-coining behavior.
+as `dg:chunk` with its text, structure, and `dg:origin` intact. There is no flag
+to apply a schema partly: to let labeling invent its own vocabulary, don't
+supply one.
 
 Four input forms, detected by content:
 
@@ -486,9 +487,10 @@ by default it's labeled seeded with the docset's own `authored-schema.json` if a
 previous `--schema-path` run supplied one, else its derived `schema.json` (full
 fidelity: descriptions, observed examples, kind, hierarchy), else the flat
 `cache/concept_roster.json`, so its tags stay consistent with the rest (no
-`--schema-path` needed). **Any seed closes the vocabulary**, so the new document
-no longer coins tags for roles the docset never planned — pass
-`--allow-new-tags` if you want it to. Every concept is emitted in the `docset:` vocabulary
+`--schema-path` needed). A remembered **authored** schema closes the vocabulary
+the same way `--schema-path` does; a schema the pipeline **derived** only seeds,
+so an ordinary incremental run still coins for roles it doesn't cover and is
+unaffected by this feature. Every concept is emitted in the `docset:` vocabulary
 namespace (`dg:` is framework-only), so growing the docset never flips a tag's
 prefix; an already-generated file is still re-rendered deterministically when
 its output otherwise changes as the docset's schema/roster grows (reported under

@@ -160,7 +160,9 @@ class ConvertOptions:
     # unmatched content renders as dg:chunk with its text intact. None = open,
     # i.e. coin freely (today's behavior, and the right default for a library
     # caller). Whether a seed closes the vocabulary is CLI policy, not a
-    # property of the seed — see `dgml docset generate --allow-new-tags`.
+    # property of the seed: the CLI closes on a vocabulary a PERSON authored
+    # (`--schema-path`, or one a previous run remembered) and not on one it
+    # derived from its own labels.
     vocab: TagVocab | None = None
     progress: Callable[[str], None] | None = field(default=None)
     # Workspace to record LLM usage into. When set (and ``debug`` is True), the

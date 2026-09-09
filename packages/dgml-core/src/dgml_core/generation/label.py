@@ -1589,8 +1589,8 @@ def label_documents(
     dropped — an unmatched block renders as ``dg:chunk`` with its text intact.
     Default (``None``) is the open vocabulary, i.e. today's coin-freely
     behavior. Deciding WHEN to close is the caller's policy, not this
-    function's: the CLI closes whenever a seed exists unless
-    ``--allow-new-tags`` is given.
+    function's: the CLI closes on a vocabulary a PERSON authored and not on one
+    it derived from its own labels.
 
     *on_rejected* — called ``(doc_name, Counter[concept])`` once per document
     that had any — reports what a closed vocabulary refused. That list is the
