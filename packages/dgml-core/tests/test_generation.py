@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from dgml_core.generation.label import (
 )
 from dgml_core.generation.prompts import get as get_prompt
 from dgml_core.generation.render import render_xml
+from dgml_core.generation.to_semantic import build_header, render_dgml
 from dgml_core.generation.transcribe import (
     _append_continuation,
     _parse_window_compact,
@@ -47,6 +49,7 @@ from dgml_core.generation.transcribe import (
     loads_tolerant,
     parse_window_any,
 )
+from dgml_core.generation.vocab import OPEN_VOCAB, TagVocab
 from lxml import etree  # type: ignore[import-untyped]
 
 
@@ -2446,6 +2449,8 @@ def test_label_chunk_recovers_by_splitting_on_unparseable_reply(
         stem="doc",
         label_tag="c01",
         warnings=warnings,
+        vocab=OPEN_VOCAB,
+        rejected=[],
     )
     assert err is None
     assert all(b.concept == "Revenue" for b in chunk)  # every block recovered
@@ -2479,7 +2484,403 @@ def test_label_chunk_does_not_split_on_call_error(monkeypatch: pytest.MonkeyPatc
         stem="doc",
         label_tag="c01",
         warnings=warnings,
+        vocab=OPEN_VOCAB,
+        rejected=[],
     )
     assert err is None  # RuntimeError is soft, not a reachability error
     assert calls["n"] == 2  # retried once, never split
     assert sum("labeling failed" in w for w in warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# User-provided schema: verbatim names, a closed vocabulary, tag purity
+# ---------------------------------------------------------------------------
+
+_PO_SCHEMA_FIXTURE = Path(__file__).parent / "fixtures" / "authored_schema_po.json"
+_HEADER = build_header("TestOrg", "TestDocSet")
+
+
+def _closed(*names: str) -> TagVocab:
+    return TagVocab.build(names, closed=True)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # exact
+        ("CustomerName", "CustomerName"),
+        ("  CustomerName  ", "CustomerName"),
+        # case
+        ("customername", "CustomerName"),
+        ("CUSTOMERNAME", "CustomerName"),
+        ("customerName", "CustomerName"),
+        # separators
+        ("Customer_Name", "CustomerName"),
+        ("customer-name", "CustomerName"),
+        ("Customer Name", "CustomerName"),
+        ("customer.name", "CustomerName"),
+        # word order / different tokens / stems — SEMANTIC, not formatting
+        ("NameOfCustomer", None),
+        ("CustFirstLast", None),
+        ("ClientName", None),
+        ("BuyerName", None),
+        ("CustomerNames", None),
+        ("CustomerNam", None),
+        ("", None),
+    ],
+)
+def test_tag_vocab_resolves_format_drift_and_rejects_synonyms(
+    raw: str, expected: str | None
+) -> None:
+    """The D7 boundary, in one table — this IS the feature's contract.
+
+    Squash equality and nothing else: lowercase, strip non-alphanumerics,
+    compare. No stemming, no token reordering, no synonym list, no edit
+    distance. If someone later adds any of those, this test fails loudly.
+    """
+    assert _closed("CustomerName").resolve(raw) == expected
+
+
+def test_tag_vocab_open_falls_back_to_the_model_output_sanitizer() -> None:
+    """With an open vocabulary the resolver is exactly `sanitize_concept`, so a
+    run with no schema behaves as it always has — and the protections against
+    model noise stay in force."""
+    from dgml_core.generation.vocab import OPEN_VOCAB
+
+    seeded_open = TagVocab.build(["CustomerName"], closed=False)
+    for vocab in (OPEN_VOCAB, seeded_open):
+        assert vocab.resolve("PaymentTermsClause") == "PaymentTerms"  # suffix stripped
+        assert vocab.resolve("ConceptClientName") == "ClientName"  # leaked prompt prefix
+        assert vocab.resolve("Paragraph2") is None  # purely structural
+        assert vocab.resolve("x" * 100) is None  # a str()-ified payload fragment
+        # a whole sentence returned as a tag name (over _MAX_CONCEPT_CHARS)
+        sentence = "The block below describes the payment obligations of the buyer under"
+        assert vocab.resolve(f"{sentence} this agreement") is None
+    # A seeded-but-open vocabulary still resolves its OWN names verbatim, which
+    # is the point of W1: `sanitize_concept` alone would fold `Notes` to ''.
+    assert TagVocab.build(["Notes"], closed=False).resolve("Notes") == "Notes"
+    assert OPEN_VOCAB.resolve("Notes") is None
+
+
+def test_seeded_schema_names_survive_verbatim_into_the_xml() -> None:
+    """Authored names reach the emitted XML spelled as written.
+
+    `sanitize_concept` — written to tame MODEL output — deletes `Notes`,
+    `Details` and `Section3` outright and truncates `AgreementSummary`. On
+    human input that is silent data loss, so it must not run on this path.
+    """
+    from dgml_core.generation.label import _seed_entries_from_schema
+    from dgml_core.generation.schema import parse_authored_schema
+
+    long_name = "A" + "b" * 99  # 100 chars — over blocks._MAX_CONCEPT_CHARS
+    authored = ["Notes", "Details", "Line Items", "AgreementSummary", "Section3", long_name]
+    for name in authored:
+        assert sanitize_concept(name) != name  # every one of these would be mangled
+
+    schema, notes = parse_authored_schema("\n".join(authored))
+    assert list(schema.tags) == [
+        "Notes",
+        "Details",
+        "Line_Items",  # the ONE documented transformation: XML validity
+        "AgreementSummary",
+        "Section3",
+        long_name,
+    ]
+    assert any("Line Items" in note for note in notes)
+    assert list(_seed_entries_from_schema(schema)) == list(schema.tags)
+
+    vocab = TagVocab.build(schema.tags, closed=True)
+    blocks = [
+        _b("p", f"b{i}", text=f"body {i}", concept=name) for i, name in enumerate(schema.tags)
+    ]
+    xml = render_dgml(blocks, header=_HEADER, vocab=vocab)
+    for name in schema.tags:
+        assert f"<docset:{name}" in xml
+
+
+def test_closed_vocabulary_keeps_the_emitted_tags_a_subset_of_the_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The V1 acceptance test: parse the generated XML, collect every `docset:`
+    localname, assert the set is a subset of the supplied tag list.
+
+    The model deliberately reaches outside the schema here — an alias, a coined
+    role, unseeded table columns — and none of it reaches the output.
+    """
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _notes = parse_authored_schema("CustomerName\nNotes\nLine Items\nPaymentTerms\n")
+    vocab = TagVocab.build(schema.tags, closed=True)
+    docs = {
+        "a.pdf": [
+            _b("heading", "b1", text="Payment Terms"),
+            _b("p", "b2", text="Invoices are payable within 30 days to Acme Corp."),
+            _b("p", "b3", text="Some general notes here."),
+            _b("row", "b4", cells=["Widget", "5", "$10.00"]),
+            _b("row", "b5", cells=["Gadget", "2", "$20.00"]),
+            _b("field", "b6", label="Customer", value="Acme Corp."),
+        ]
+    }
+    reply = {
+        "labels": {
+            "b1": {"concept": "payment_terms"},  # tolerant hit
+            "b2": {
+                "concept": "PaymentObligations",  # coined -> refused
+                "entities": [{"quote": "Acme Corp.", "concept": "NameOfCustomer"}],  # alias
+            },
+            "b3": {"concept": "Notes"},  # verbatim; sanitize_concept would drop it
+            "b4": {"concept": "Line Items", "table": "OrderTable", "cells": ["P", "Q", "U"]},
+            "b5": {"concept": "Line Items", "table": "OrderTable", "cells": ["P", "Q", "U"]},
+            "b6": {"concept": "CUSTOMERNAME"},  # case variant -> hit
+        }
+    }
+    monkeypatch.setattr(llm, "call", lambda config, **kw: json.dumps(reply))
+    rejected: dict[str, Counter[str]] = {}
+    label_documents(
+        docs,
+        config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+        schema_seed=schema,
+        vocab=vocab,
+        on_rejected=lambda name, tally: rejected.__setitem__(name, tally),
+    )
+    xml = render_dgml(docs["a.pdf"], header=_HEADER, vocab=vocab)
+    emitted = {el.tag.rsplit("}", 1)[-1] for el in etree.fromstring(xml.encode()).iter()}
+    emitted -= {"chunk"}  # dg: scaffolding
+    assert emitted <= set(schema.tags), f"escaped the vocabulary: {emitted - set(schema.tags)}"
+    assert emitted == {"CustomerName", "Notes", "Line_Items", "PaymentTerms"}
+    # NOTHING is dropped: a refused concept costs the tag, never the content.
+    for text in ("Invoices are payable within 30 days", "Acme Corp.", "Widget", "$10.00"):
+        assert text in xml
+    assert '<dg:chunk dg:structure="p">Invoices are payable' in xml
+    # The refusals are reported, with the names the model reached for — the
+    # most actionable output of a closed run.
+    assert set(rejected["a.pdf"]) == {
+        "PaymentObligations",
+        "NameOfCustomer",
+        "OrderTable",
+        "P",
+        "Q",
+        "U",
+    }
+
+
+def test_closed_run_never_emits_the_renderers_own_columnheader_literal() -> None:
+    """`_concept_tag("ColumnHeader")` is a literal the RENDERER injects for a
+    demoted printed-title row — the one `docset:` tag that never passes through
+    labeling. Under closure it is subject to the same rule as everything else,
+    or the subset guarantee would have a footnote."""
+    rows = [
+        _b("row", "b1", cells=["Product", "Qty"], header_row=True),
+        _b("row", "b2", cells=["Widget", "5"]),
+        _b("row", "b3", cells=["Gadget", "2"]),
+    ]
+    open_xml = render_dgml(rows, header=_HEADER)
+    assert "<docset:ColumnHeader" in open_xml  # unchanged when nobody pinned a vocabulary
+
+    closed_xml = render_dgml(rows, header=_HEADER, vocab=_closed("Product"))
+    assert "<docset:ColumnHeader" not in closed_xml
+    assert "Product" in closed_xml and "Qty" in closed_xml  # the header text still renders
+    # …and an author who WANTS the tag simply declares it.
+    declared = render_dgml(rows, header=_HEADER, vocab=_closed("ColumnHeader"))
+    assert "<docset:ColumnHeader" in declared
+
+
+def test_closed_run_sends_the_exhaustive_vocabulary_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W2a — the prompt must SAY the list is closed, or the resolver is left
+    rejecting far more than it needs to."""
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _ = parse_authored_schema("PaymentTerms\n")
+    sent: list[str] = []
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        sent.append("\n\n".join(str(part["text"]) for part in kw["user_content"]))
+        return json.dumps({"labels": {}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    # The heading is left unlabeled by the stub, so the section retry fires too
+    # — and its instruction must also stop pushing for a coined name, which a
+    # closed resolver is guaranteed to throw away.
+    for closed, calls, expect, forbid in (
+        # 2 calls closed vs 3 open: the under-labeled retry is a truncation
+        # heuristic calibrated for open labeling, where "almost nothing got a
+        # concept" means the call came back short. Under closure a small schema
+        # legitimately leaves most blocks untagged, so it would fire on nearly
+        # every chunk and double the pass's cost for nothing.
+        (
+            True,
+            2,
+            ("roster_closed_intro", "section_retry_closed"),
+            ("roster_intro", "section_retry"),
+        ),
+        (
+            False,
+            3,
+            ("roster_intro", "section_retry"),
+            ("roster_closed_intro", "section_retry_closed"),
+        ),
+    ):
+        sent.clear()
+        label_documents(
+            {"a.pdf": [_b("heading", "b1", text="Payment Terms")]},
+            config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+            schema_seed=schema,
+            vocab=TagVocab.build(schema.tags, closed=closed),
+        )
+        assert len(sent) == calls
+        assert all(get_prompt(expect[0]) in text for text in sent)
+        assert all(get_prompt(forbid[0]) not in text for text in sent)
+        assert get_prompt(expect[1]) in sent[-1]
+        assert get_prompt(forbid[1]) not in sent[-1]
+
+
+def test_closed_run_skips_the_concept_description_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`describe_concepts` writes roles for concepts COINED during labeling. A
+    closed run coins none and re-seeds from the authored schema, so the call
+    could change neither a prompt nor a seed — pure waste (problem 4.3)."""
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+    described: list[object] = []
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        text = "\n\n".join(str(part["text"]) for part in kw["user_content"])
+        if "Concepts to describe" in text:
+            described.append(text)
+            return json.dumps({"descriptions": {}})
+        return json.dumps({"labels": {"b1": {"concept": "Whatever"}}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    for closed, expect_calls in ((False, 1), (True, 0)):
+        described.clear()
+        cache = tmp_path / ("closed" if closed else "open") / "cache"
+        cache.mkdir(parents=True)
+        label_documents(
+            {"a.pdf": [_b("heading", "b1", text="Payment Terms")]},
+            config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+            schema_seed=schema,
+            vocab=TagVocab.build(schema.tags, closed=closed),
+            cache_dir=cache,
+        )
+        assert len(described) == expect_calls
+
+
+def test_derive_schema_keeps_authored_names_the_run_actually_emitted() -> None:
+    """The export must agree with the XML. `derive_schema` re-sanitizes concept
+    names, which would drop `Notes` from schema.json while the document happily
+    carries `<docset:Notes>` — and then `build_rnc` would list it as a tag
+    "observed but absent from schema.json"."""
+    from dgml_core.generation.label import RosterEntry, derive_schema
+
+    roster = {"Notes": RosterEntry(description="free-text notes", confirmed=True, frozen=True)}
+    docs = {"a.pdf": [_b("p", "b1", text="a note", concept="Notes")]}
+    # Without a vocabulary the tag survives (it is a roster key) but every
+    # OBSERVATION of it is thrown away: `record` sanitizes `Notes` to '' and
+    # returns early, so the kind falls back to the `inline` default even though
+    # the run tagged a section with it.
+    assert derive_schema(docs, roster, {}).tags["Notes"].kind == "inline"
+    assert derive_schema(docs, roster, {}, vocab=_closed("Notes")).tags["Notes"].kind == "section"
+
+
+def test_cache_replay_resolves_through_the_same_vocabulary(tmp_path: Path) -> None:
+    """A replayed document must render byte-identically to a freshly-labeled
+    one. `load_labeled_docs_from_cache` re-runs `apply_labels` over the cached
+    label JSON, so a vocabulary difference here would silently break exactly
+    the reproducibility a pinned schema exists to provide."""
+    from dgml_core.generation.pipeline import load_labeled_docs_from_cache
+
+    vocab = _closed("PaymentTerms", "Notes")
+    blocks = [
+        _b("heading", "b1", text="Payment Terms"),
+        _b("p", "b2", text="Some notes."),
+        _b("p", "b3", text="Off-vocabulary prose."),
+    ]
+    labels = {
+        "b1": {"concept": "payment_terms"},
+        "b2": {"concept": "Notes"},
+        "b3": {"concept": "GeneralProvisions"},
+    }
+    fresh = [Block(**{**vars(b)}) for b in blocks]
+    apply_labels(fresh, labels, doc_name="a.pdf", vocab=vocab)
+    fresh_xml = render_dgml(fresh, header=_HEADER, vocab=vocab)
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "a_blocks.json").write_text(json.dumps([vars(b) for b in blocks]), encoding="utf-8")
+    (cache / "label_a_c01_raw.json").write_text(json.dumps({"labels": labels}), encoding="utf-8")
+    replayed = load_labeled_docs_from_cache(cache, ["a"], vocab)["a"]
+    assert render_dgml(replayed, header=_HEADER, vocab=vocab) == fresh_xml
+    # And the replay is NOT accidentally identical: without the vocabulary the
+    # same cache resolves differently, which is the bug this guards.
+    stale = load_labeled_docs_from_cache(cache, ["a"])["a"]
+    assert render_dgml(stale, header=_HEADER) != fresh_xml
+
+
+def test_authored_schema_fixture_seeds_hierarchy_and_kinds() -> None:
+    """The checked-in fixture mirrors a real gold-derived vocabulary's shape
+    (8 tags, a collection, a row type, a parent chain) so the loader is
+    exercised against something the size an author actually writes."""
+    from dgml_core.generation.label import _seed_entries_from_schema
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, notes = parse_authored_schema(_PO_SCHEMA_FIXTURE.read_text(encoding="utf-8"))
+    assert notes == []  # nothing had to be rewritten
+    assert len(schema.tags) == 8
+    assert schema.tags["OrderLine"].kind == "row"
+    roster = _seed_entries_from_schema(schema)
+    assert roster["OrderPartNumber"].parent == "OrderLine"
+    assert all(entry.confirmed and entry.frozen for entry in roster.values())
+
+
+def test_unseeded_runs_are_exactly_the_pre_vocabulary_behavior() -> None:
+    """The default path must not move. With no vocabulary the resolver IS
+    `sanitize_concept`, on ingest and on render alike — so a run that supplies
+    no schema produces what it always produced.
+
+    (Verified out-of-band too: this document's XML and this reply's applied
+    blocks are byte-identical to the same code on `main`.)"""
+    from dgml_core.generation.vocab import OPEN_VOCAB
+
+    blocks = [
+        _b("heading", "b1", text="March 1, 2022"),
+        _b("p", "b2", text="Invoices are payable within 30 days to Acme Corp."),
+        _b("row", "b3", cells=["Widget", "5", "$10.00"]),
+        _b("field", "b4", label="Customer ID 42", value="Acme Corp."),
+    ]
+    labels = {
+        "b1": {
+            "concept": "SectionHeading",  # purely structural -> dropped
+            "entities": [{"quote": "March 1, 2022", "concept": "EffectiveDate"}],
+        },
+        "b2": {
+            "concept": "ConceptPaymentTerms",  # leaked prompt prefix -> stripped
+            "entities": [{"quote": "Acme Corp.", "concept": "supplier-name"}],
+        },
+        "b3": {"concept": "OrderLine", "table": "Order Lines", "cells": ["Product Name", "Q", "U"]},
+        "b4": {
+            "concept": "Details",  # structural -> dropped
+            "entities": [{"quote": "42", "concept": "CustomerId"}],
+        },
+    }
+
+    def _render(vocab: TagVocab | None) -> tuple[str, list[str]]:
+        fresh = [Block(**vars(b)) for b in blocks]
+        warns = apply_labels(fresh, labels, doc_name="a.pdf", vocab=vocab)
+        return render_dgml(fresh, header=_HEADER, vocab=vocab), warns
+
+    default, default_warns = _render(None)
+    explicit, explicit_warns = _render(OPEN_VOCAB)
+    assert (default, default_warns) == (explicit, explicit_warns)
+    # Spot-check the sanitizer's characteristic behaviors are all still in force.
+    assert "SectionHeading" not in default and "Details" not in default
+    assert "<docset:PaymentTerms" in default  # Concept-prefix stripped
+    assert "<docset:SupplierName" in default  # kebab-case normalized
+    assert "<docset:ProductName" in default  # spaced cell concept normalized
+    # "Order Lines" -> "Order": the structural-suffix strip eats `Lines`. Odd,
+    # but it is exactly what the unseeded pipeline has always done, which is
+    # the point of this test.
+    assert "<docset:Order " in default

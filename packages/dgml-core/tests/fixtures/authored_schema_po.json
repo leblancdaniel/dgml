@@ -1,0 +1,53 @@
+{
+  "tags": {
+    "OrderLines": {
+      "role": "The table of ordered products on a purchase order",
+      "kind": "section",
+      "examples": [],
+      "parent_role": ""
+    },
+    "OrderLine": {
+      "role": "One product line on the order",
+      "kind": "row",
+      "examples": [],
+      "parent_role": "OrderLines"
+    },
+    "OrderPartNumber": {
+      "role": "Supplier SKU or part number for an order line",
+      "kind": "row",
+      "examples": [],
+      "parent_role": "OrderLine"
+    },
+    "OrderProductDescription": {
+      "role": "Printed name of the product on an order line",
+      "kind": "row",
+      "examples": [],
+      "parent_role": "OrderLine"
+    },
+    "OrderQuantity": {
+      "role": "Number of units ordered on a line",
+      "kind": "row",
+      "examples": [],
+      "parent_role": "OrderLine"
+    },
+    "OrderSize": {
+      "role": "Unit or container size for an order line",
+      "kind": "row",
+      "examples": [],
+      "parent_role": "OrderLine"
+    },
+    "OrderUnitPrice": {
+      "role": "Price per unit on an order line",
+      "kind": "inline",
+      "examples": [],
+      "parent_role": "OrderLine"
+    },
+    "PurchaseOrderNumber": {
+      "role": "Identifier the customer assigned to this order",
+      "kind": "inline",
+      "examples": [],
+      "parent_role": ""
+    }
+  },
+  "notes": "Test fixture: the SHAPE of a real gold-derived purchase-order vocabulary (8 tags, one collection, one row type, a hierarchy). Role names only — no example values, so no document content is checked in."
+}
