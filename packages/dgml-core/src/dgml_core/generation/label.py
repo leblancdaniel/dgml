@@ -1395,13 +1395,16 @@ def _label_chunk(
             )
         )
         labeled = sum(1 for b in chunk if b.concept)
-        # The under-label retry treats a low labeled fraction as a truncated
-        # call. Under a CLOSED vocabulary that inference does not hold: a small
-        # schema legitimately leaves most blocks untagged, so the threshold
-        # would fire on nearly every chunk and double the pass's cost for
-        # nothing. Real truncation is still caught — an oversized reply comes
-        # back unparseable and takes the bisect path above.
-        if attempt or vocab.closed or labeled >= len(chunk) * _MIN_LABELED_FRACTION:
+        # Applies under a closed vocabulary TOO. An earlier version skipped it
+        # when closed, reasoning that a small schema legitimately leaves most
+        # blocks untagged so the threshold would fire on every chunk. That was
+        # wrong in the way that matters: measurement showed closed runs
+        # labeling as little as 5% of blocks where the same schema left open
+        # labeled 87%, and this retry is the only thing that detects it. A
+        # correctly-labeling closed run sits far above the threshold, so the
+        # retry stays rare; when it does fire, something is wrong and one extra
+        # call is the cheapest way to find out.
+        if attempt or labeled >= len(chunk) * _MIN_LABELED_FRACTION:
             break
         log(f"[label] {doc_name} {label_tag} under-labeled ({labeled}/{len(chunk)}); retrying")
     _update_roster(roster, chunk)

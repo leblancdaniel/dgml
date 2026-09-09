@@ -2703,15 +2703,15 @@ def test_closed_run_sends_the_exhaustive_vocabulary_prompt(
     # The heading is left unlabeled by the stub, so the section retry fires too
     # — and its instruction must also stop pushing for a coined name, which a
     # closed resolver is guaranteed to throw away.
+    # 3 calls either way — chunk, under-label retry, section retry. The retry
+    # count is asserted deliberately: an earlier version skipped the
+    # under-label retry when closed, and that removed the only detector for a
+    # closed run that labels almost nothing (measured at 5% of blocks where the
+    # same schema left open labeled 87%). Closure must not buy silence.
     for closed, calls, expect, forbid in (
-        # 2 calls closed vs 3 open: the under-labeled retry is a truncation
-        # heuristic calibrated for open labeling, where "almost nothing got a
-        # concept" means the call came back short. Under closure a small schema
-        # legitimately leaves most blocks untagged, so it would fire on nearly
-        # every chunk and double the pass's cost for nothing.
         (
             True,
-            2,
+            3,
             ("roster_closed_intro", "section_retry_closed"),
             ("roster_intro", "section_retry"),
         ),
@@ -2734,6 +2734,14 @@ def test_closed_run_sends_the_exhaustive_vocabulary_prompt(
         assert all(get_prompt(forbid[0]) not in text for text in sent)
         assert get_prompt(expect[1]) in sent[-1]
         assert get_prompt(forbid[1]) not in sent[-1]
+    # Closing the vocabulary must not also switch off density. Losing that is
+    # what made a closed run tag 5% of blocks against the open arm's 87%, and
+    # it is an easy thing to delete while tightening the wording.
+    closed_intro = get_prompt("roster_closed_intro").lower()
+    assert "densely" in closed_intro
+    assert "every heading still gets a concept" in closed_intro
+    # The section retry must ask for a listed concept, not offer an easy out.
+    assert "most of these headings have one that fits" in get_prompt("section_retry_closed")
 
 
 def test_closed_run_skips_the_concept_description_call(

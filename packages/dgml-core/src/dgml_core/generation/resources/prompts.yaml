@@ -234,24 +234,37 @@
   {"concepts": {"<concept>": "<one-line role description>", ...}}
 "roster_intro": |-
   CONCEPTS ALREADY IN USE in this document set — reuse these names verbatim where the role matches:
+# EDITING NOTE — the closed vocabulary must not make abstention feel free.
+# The first version of this prompt said leaving a block unlabeled "is CORRECT
+# here and costs nothing" while reaching outside the list was "the one thing
+# you must never do", and blanket-overrode the density rules. Measured at N=4
+# on 6 gold docsets, that cost 17.9 points of global exact-match F1 — not
+# because concepts were refused (only 75 uses were) but because the model
+# stopped labeling at all: 5% of blocks tagged where the same schema left open
+# tagged 87%. Keep the prohibition on inventing names; keep density the job.
 "roster_closed_intro": |-
-  THE COMPLETE AND ONLY CONCEPT VOCABULARY for this document set. This list is
-  EXHAUSTIVE: it is the entire set of concept names that exist. Use these names
-  VERBATIM, exactly as spelled below.
+  THE COMPLETE CONCEPT VOCABULARY for this document set. These names are the
+  entire palette you have to work with: use them VERBATIM, exactly as spelled
+  below. Do not coin, invent, rename, abbreviate, or pluralize any other name.
 
-  You may NOT coin, invent, rename, abbreviate, pluralize, or otherwise vary a
-  concept name. There is no such thing as a concept outside this list.
+  Your job is unchanged: label DENSELY, following every density rule above.
+  This list is not a filter to be applied sparingly — it is the vocabulary this
+  whole document set is written in, and MOST blocks have a concept on it that
+  fits. For every block, entity, and table cell, first find the listed concept
+  whose ROLE best matches what you are labeling, and use that name. A listed
+  concept whose role matches is always the right answer, even when the wording
+  printed on the page is different from the concept's name — you are matching
+  roles, not spellings.
 
-  When a block's role is NOT on the list, return that block with NO concept —
-  omit the "concept" key, or give it "". The same applies to entities and to
-  table cells: a value whose kind is not on the list gets no entity at all.
-  Leaving something unlabeled is CORRECT here and costs nothing; the block's
-  text is preserved either way. Reaching for a name that is not on the list is
-  the one thing you must never do — a near-miss name is discarded, so it buys
-  nothing and loses the block.
+  EVERY heading still gets a concept naming its section's role, and repeating
+  rows, columns, and fields still get theirs, exactly as described above.
 
-  This OVERRIDES the density rules above wherever they conflict: if no listed
-  concept names a heading's role, that heading gets no concept.
+  Only when NO listed concept names a block's role at all should you return it
+  with no concept (omit the "concept" key, or give it ""). That is the
+  exception, not the default: an unlabeled block loses its meaning, so look for
+  the listed concept that genuinely fits before leaving anything untagged. What
+  you must not do is answer with a name that is not on the list — such a name
+  is discarded, so it helps nothing.
 
   THE VOCABULARY:
 "roster_planned_intro": |-
@@ -259,10 +272,11 @@
 "section_retry": |-
   These section headings were left unlabeled. Give each a concept naming its section's role:
 "section_retry_closed": |-
-  These section headings were left unlabeled. For each one, give the concept
-  from the vocabulary above that names its section's role — reusing a listed
-  name verbatim. If NO listed concept names a heading's role, leave that
-  heading out of your reply entirely. Do not coin a name to fill a gap:
+  These section headings were left unlabeled. Give each one the concept from
+  the vocabulary above that names its section's role, reusing a listed name
+  verbatim — most of these headings have one that fits, so work through them
+  one by one and find it. Leave a heading out of your reply only when no listed
+  concept names its role at all. Do not coin a name to fill a gap:
 "describe_concepts": |
   You write one-line ROLE descriptions for document field concepts. Each concept
   is a PascalCase name shown with one or more example values observed in the
