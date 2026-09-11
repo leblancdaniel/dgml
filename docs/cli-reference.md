@@ -940,6 +940,20 @@ contract, a regulated vocabulary, anything where an unexpected tag is a defect.
 vocabulary applied first and a reviewed list of what the documents needed beyond
 it, which you fold into the next revision.
 
+> **Extend is an authoring aid, not a setting to leave on.** Your supplied tags
+> are stable across runs by construction; the names it *coins* are not. Measured
+> over four runs of the same documents, 62–82% of coined names appeared in only
+> one of the four — the supplement is close to re-invented each time. That is
+> the tag drift DGML exists to prevent, so treat extend as one step in a loop:
+> run it, review `added_concepts`, fold what you want into your schema, then run
+> strict for output you intend to keep or query.
+
+Neither mode is a way to improve extraction accuracy. Measured against a
+no-schema run on gold-annotated docsets, strict scores lower and extend scores
+about the same to lower — never better. What a supplied schema buys is control
+and determinism: your vocabulary, applied consistently, with a report of what
+fell outside it.
+
 Neither mode plans a vocabulary of its own, and both keep every downstream pass
 — grounding, semantic links, value typing, table and list consolidation — exactly
 as a default run does. What a supplied schema removes is vocabulary *invention*,

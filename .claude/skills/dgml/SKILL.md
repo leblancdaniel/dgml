@@ -377,6 +377,13 @@ coinage reported per file under `added_concepts` so you can fold it into the
 next revision. Strict reports the mirror image as `unmatched_concepts` — what it
 had to refuse. The mode is per-run; the schema is remembered, the flag is not.
 
+Use extend as a **step in a loop, not a standing setting**: the tags it coins
+are unstable run-to-run (measured: 62–82% of coined names appeared in only one
+of four runs of the same documents), so run it, review `added_concepts`, fold
+what you want into the schema, then run strict for output you intend to keep.
+Neither mode improves extraction accuracy over a no-schema run — what a
+supplied schema buys is vocabulary control and determinism.
+
 Four input forms, detected by content:
 
 - **a plain tag list** — one name per line, `#` comments and blanks ignored;
