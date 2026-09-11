@@ -367,9 +367,15 @@ uv run dgml docset generate --workspace "$wid" "$ds"
 non-deterministic run-to-run; supplying a schema locks the concept vocabulary.
 The planning pass is skipped and the generated DGML uses those tag names **and
 no others**. Content whose role has no matching tag is not dropped — it renders
-as `dg:chunk` with its text, structure, and `dg:origin` intact. There is no flag
-to apply a schema partly: to let labeling invent its own vocabulary, don't
-supply one.
+as `dg:chunk` with its text, structure, and `dg:origin` intact.
+
+Two modes, for two situations. `--schema-path X` alone is **strict** — your tag
+names and no others, for when the schema is the specification. Adding
+`--extend-schema` makes it a **foundation**: your names are reused wherever one
+fits, and a recurring role your schema doesn't cover may be coined, with every
+coinage reported per file under `added_concepts` so you can fold it into the
+next revision. Strict reports the mirror image as `unmatched_concepts` — what it
+had to refuse. The mode is per-run; the schema is remembered, the flag is not.
 
 Four input forms, detected by content:
 

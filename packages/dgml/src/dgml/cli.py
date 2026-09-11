@@ -2782,6 +2782,19 @@ def _add_generate_subparser(
         ),
     )
     gen.add_argument(
+        "--extend-schema",
+        action="store_true",
+        help=(
+            "Treat the supplied schema as a foundation rather than the whole "
+            "vocabulary: labeling reuses your tag names wherever one fits, and may "
+            "coin a new name for a recurring role your schema does not cover. Every "
+            "coined name is reported per file under `added_concepts`, so it can be "
+            "folded into the next revision of your schema. Requires a supplied "
+            "schema (--schema-path, or one a previous run remembered); without this "
+            "flag a supplied schema is used strictly and nothing else is emitted."
+        ),
+    )
+    gen.add_argument(
         "--no-roster",
         action="store_true",
         help=(
@@ -3255,10 +3268,13 @@ def _docset_generate_cmd(args: argparse.Namespace, ws: Workspace, fmt: str) -> i
     # document keeps its (unlinked) DGML, so without this a rate limit or a bad
     # model id looked exactly like "this document has no links".
     link_errors: dict[str, str] = {}
-    # name -> {count, distinct, examples} for the concepts a CLOSED vocabulary
-    # refused. Absent from a file's entry when the run was open or nothing was
-    # refused, like every other conditional key here.
-    unmatched_concepts: dict[str, dict[str, Any]] = {}
+    # name -> {count, distinct, examples} for the concepts that fell outside an
+    # AUTHORED vocabulary. Reported as `unmatched_concepts` under a strict
+    # schema (refused, so the list is what the schema is missing) and as
+    # `added_concepts` under --extend-schema (coined and used, so the list is
+    # the candidate set for the schema's next revision). Absent from a file's
+    # entry when nothing went outside, like every other conditional key here.
+    off_schema_concepts: dict[str, dict[str, Any]] = {}
 
     def _on_error(name: str, message: str) -> None:
         gen_errors[name] = message
@@ -3267,13 +3283,13 @@ def _docset_generate_cmd(args: argparse.Namespace, ws: Workspace, fmt: str) -> i
         label_errors[name] = err
         _diag(f"[label] {name}: model unreachable ({err.get('message', '')})")
 
-    def _on_rejected(name: str, tally: Counter[str]) -> None:
-        # Which names the model reached for outside a closed schema. The most
-        # actionable output of a closed run: recognizable aliases of tags you
-        # already have, roles the schema simply omitted, or junk — each points
-        # at a different fix. Reported per file, not just logged, so it is
-        # readable without --verbose.
-        unmatched_concepts[name] = {
+    def _on_off_schema(name: str, tally: Counter[str]) -> None:
+        # Which names the model reached for outside the supplied schema. The
+        # most actionable output of either mode — under strict these are gaps
+        # to consider adding, under extend they are additions to review.
+        # Reported per file, not just logged, so it is readable without
+        # --verbose.
+        off_schema_concepts[name] = {
             "count": sum(tally.values()),
             "distinct": len(tally),
             "examples": [concept for concept, _n in tally.most_common(_UNMATCHED_EXAMPLES)],
@@ -3450,9 +3466,9 @@ def _docset_generate_cmd(args: argparse.Namespace, ws: Workspace, fmt: str) -> i
         link_error = link_errors.get(name)
         if link_error is not None:
             extra["link_error"] = link_error
-        unmatched = unmatched_concepts.get(name)
-        if unmatched is not None:
-            extra["unmatched_concepts"] = unmatched
+        off_schema = off_schema_concepts.get(name)
+        if off_schema is not None:
+            extra["added_concepts" if args.extend_schema else "unmatched_concepts"] = off_schema
         converted_by_name[name] = _file_result(
             "converted",
             filename_to_fid[name],
@@ -3562,12 +3578,34 @@ def _docset_generate_cmd(args: argparse.Namespace, ws: Workspace, fmt: str) -> i
             seed_names = (
                 list(schema_seed.tags) if schema_seed is not None else list(roster_seed or {})
             )
-            vocab = TagVocab.build(seed_names, closed=authored and bool(seed_names))
+            # --extend-schema keeps an AUTHORED vocabulary open: the user's names
+            # are still authoritative and reused first, but labeling may coin for
+            # a role they did not cover, and every coinage is reported back as a
+            # candidate for the next revision. It is meaningless without an
+            # authored schema, so say so rather than silently doing nothing.
+            if args.extend_schema and not authored:
+                raise InvalidArgument(
+                    "--extend-schema needs a supplied schema to extend. Pass "
+                    "--schema-path <file>, or run it on a docset where a previous "
+                    "--schema-path run left an authored schema. (Without a supplied "
+                    "schema, labeling already coins its own vocabulary.)"
+                )
+            vocab = TagVocab.build(
+                seed_names,
+                closed=authored and bool(seed_names) and not args.extend_schema,
+                authored=authored,
+            )
             if vocab.closed:
                 _diag(
                     f"Vocabulary CLOSED at {len(vocab.names)} tag(s): the generated DGML uses "
                     "these tag names and no others. Unmatched content still renders "
                     "(as dg:chunk, text intact)."
+                )
+            elif vocab.extends:
+                _diag(
+                    f"Vocabulary EXTENDS {len(vocab.names)} authored tag(s): these are reused "
+                    "wherever one fits; a role they do not cover may be coined, and every "
+                    "coinage is reported under added_concepts."
                 )
             elif seed_names:
                 _diag(f"Seeded with {len(seed_names)} derived tag(s); labeling may coin more")
@@ -3629,7 +3667,7 @@ def _docset_generate_cmd(args: argparse.Namespace, ws: Workspace, fmt: str) -> i
                     on_output=_on_output,
                     on_error=_on_error,
                     on_label_error=_on_label_error,
-                    on_rejected=_on_rejected,
+                    on_off_schema=_on_off_schema,
                     prior_docs=prior_docs,
                     prior_outputs=prior_outputs,
                 )

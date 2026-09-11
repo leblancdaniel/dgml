@@ -267,6 +267,40 @@
   is discarded, so it helps nothing.
 
   THE VOCABULARY:
+# EDITING NOTE — the EXTEND vocabulary must stay dominant.
+# This prompt replaced the plain `roster_intro` for authored-schema runs that
+# permit coining. Measured on 6 gold docsets, `roster_intro` in that position
+# put 59-82% of concept-tagged values under names the model COINED rather than
+# the user's own, i.e. the supplied schema became a minority of its own output.
+# The wording below exists to prevent that: reuse is the default action,
+# coining is the exception, and coining a VARIANT of a listed name (the
+# observed failure: CategoryPricing beside a listed CategoryPrice) is the
+# specific mistake to forbid. Keep all three ideas if you re-word it.
+"roster_extend_intro": |-
+  THE VOCABULARY FOR THIS DOCUMENT SET, supplied by the person who owns these
+  documents. It is AUTHORITATIVE: these are the names they want to see, and
+  reusing them is your default action, not a fallback.
+
+  For EVERY block, entity, and table cell: first look for a listed concept
+  whose ROLE matches what you are labeling, and if one does, use that name
+  VERBATIM, exactly as spelled. Match on role, not on wording — a listed
+  concept is still the right answer when the text printed on the page uses
+  different words from the concept's name.
+
+  You MAY coin a new name, but only for a genuine gap: a recurring role that
+  no listed concept covers at all. Before you coin, check the list once more.
+
+  Never coin a VARIANT of a listed name. If the list has `CategoryPrice`, do
+  not answer `CategoryPricing`, `CategoryPrices`, or `PriceByCategory` — reuse
+  the listed spelling. Near-duplicates of the supplied vocabulary are the one
+  thing this mode must not produce; they fragment the very consistency the
+  supplied schema exists to provide.
+
+  Label densely, following every density rule above. Anything you do coin will
+  be reported back to the owner as a candidate to add to their schema, so coin
+  deliberately and name it as carefully as they named theirs.
+
+  THE VOCABULARY:
 "roster_planned_intro": |-
   PLANNED CONCEPTS for this document set — proposed from the documents' shared structure, not yet observed; reuse one when its role matches rather than coining a new name:
 "section_retry": |-

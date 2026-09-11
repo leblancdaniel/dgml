@@ -2361,6 +2361,72 @@ def test_docset_generate_closes_only_on_an_authored_vocabulary(
     assert options.vocab.closed
 
 
+def test_docset_generate_extend_schema_keeps_the_vocabulary_open(
+    tmp_path: Path, text_pdf: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--extend-schema is the second use case: the supplied schema is a
+    foundation the run may add to, not the whole vocabulary."""
+    ws = tmp_path / "ws"
+    did = _docset_with_one_file(ws, text_pdf, capsys)
+    schema_path = tmp_path / "tags.txt"
+    schema_path.write_text("PaymentTerms\nDueDate\n", encoding="utf-8")
+
+    opts = _generate_with_stub_batch(
+        ws, did, ["--schema-path", str(schema_path), "--extend-schema"]
+    ).call_args.kwargs["options"]
+    assert opts.vocab.names == {"PaymentTerms", "DueDate"}
+    assert opts.vocab.authored and not opts.vocab.closed and opts.vocab.extends
+
+    # …and a remembered authored schema extends the same way, no re-supply.
+    capsys.readouterr()
+    opts = _generate_with_stub_batch(ws, did, ["--extend-schema"]).call_args.kwargs["options"]
+    assert opts.vocab.extends and opts.vocab.names == {"PaymentTerms", "DueDate"}
+    # The MODE is per-run, not remembered: a bare run goes back to strict.
+    capsys.readouterr()
+    assert _generate_with_stub_batch(ws, did, []).call_args.kwargs["options"].vocab.closed
+
+
+def test_docset_generate_extend_schema_requires_a_schema(
+    tmp_path: Path, text_pdf: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With nothing to extend the flag is meaningless, so it fails loudly
+    rather than silently doing nothing."""
+    ws = tmp_path / "ws"
+    did = _docset_with_one_file(ws, text_pdf, capsys)
+    assert main(_ws_args(ws) + ["docset", "generate", did, "--no-coverage", "--extend-schema"]) == 1
+    assert _read_stderr(capsys)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_docset_generate_reports_added_concepts_under_extend_schema(
+    tmp_path: Path, text_pdf: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same channel reports refusals under strict and additions under
+    extend — the second being the candidate list for the next schema."""
+    ws = tmp_path / "ws"
+    did = _docset_with_one_file(ws, text_pdf, capsys)
+    schema_path = tmp_path / "tags.txt"
+    schema_path.write_text("PaymentTerms\n", encoding="utf-8")
+
+    def fake_convert(
+        paths: object, *, options: object, on_output: Any, on_off_schema: Any, **_kw: object
+    ) -> dict[str, str]:
+        on_off_schema("with-text.pdf", Counter({"DeliveryDate": 2}))
+        on_output("with-text.pdf", "<xml/>")
+        return {}
+
+    for extra, key in ((["--extend-schema"], "added_concepts"), ([], "unmatched_concepts")):
+        capsys.readouterr()
+        with patch("dgml_core.generation.convert_batch", side_effect=fake_convert):
+            main(
+                _ws_args(ws)
+                + ["docset", "generate", did, "--no-coverage", "--schema-path", str(schema_path)]
+                + extra
+            )
+        entry = next(r for r in _read_stdout(capsys)["results"] if r["status"] == "converted")
+        assert entry[key] == {"count": 2, "distinct": 1, "examples": ["DeliveryDate"]}
+        assert len([k for k in entry if k.endswith("_concepts")]) == 1
+
+
 def test_docset_generate_protects_the_authored_schema_from_its_own_output(
     tmp_path: Path, text_pdf: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2413,9 +2479,9 @@ def test_docset_generate_reports_unmatched_concepts_per_file(
     schema_path.write_text("PaymentTerms\n", encoding="utf-8")
 
     def fake_convert(
-        paths: object, *, options: object, on_output: Any, on_rejected: Any, **_kw: object
+        paths: object, *, options: object, on_output: Any, on_off_schema: Any, **_kw: object
     ) -> dict[str, str]:
-        on_rejected("with-text.pdf", Counter({"NameOfCustomer": 3, "DueDate": 1}))
+        on_off_schema("with-text.pdf", Counter({"NameOfCustomer": 3, "DueDate": 1}))
         on_output("with-text.pdf", "<xml/>")
         return {}
 

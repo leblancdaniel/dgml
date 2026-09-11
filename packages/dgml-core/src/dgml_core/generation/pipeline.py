@@ -162,7 +162,8 @@ class ConvertOptions:
     # caller). Whether a seed closes the vocabulary is CLI policy, not a
     # property of the seed: the CLI closes on a vocabulary a PERSON authored
     # (`--schema-path`, or one a previous run remembered) and not on one it
-    # derived from its own labels.
+    # derived from its own labels — and `--extend-schema` keeps an authored
+    # vocabulary open so labeling may add to it.
     vocab: TagVocab | None = None
     progress: Callable[[str], None] | None = field(default=None)
     # Workspace to record LLM usage into. When set (and ``debug`` is True), the
@@ -193,7 +194,7 @@ def convert_batch(
     on_output: Callable[[str, str], None] | None = None,
     on_error: Callable[[str, str], None] | None = None,
     on_label_error: Callable[[str, dict[str, str]], None] | None = None,
-    on_rejected: Callable[[str, Counter[str]], None] | None = None,
+    on_off_schema: Callable[[str, Counter[str]], None] | None = None,
     prior_docs: Mapping[str, list[Block]] | None = None,
     prior_outputs: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
@@ -221,8 +222,9 @@ def convert_batch(
     completes before any ``on_output`` fires, so a per-file result built in
     ``on_output`` can read whatever this reported.
 
-    Pass *on_rejected* — called ``(name, Counter[concept])`` — to learn which
-    concepts a CLOSED ``options.vocab`` refused for a document. Fired only for
+    Pass *on_off_schema* — called ``(name, Counter[concept])`` — to learn which
+    concepts fell outside an AUTHORED ``options.vocab`` for a document: refused
+    under a closed vocabulary, coined under one that extends. Fired only for
     documents that had any, before their output is emitted.
 
     *prior_docs* (already-generated docs from cache) are re-rendered so the
@@ -309,7 +311,7 @@ def convert_batch(
             schema_seed=opts.schema_seed,
             vocab=vocab,
             on_label_error=on_label_error,
-            on_rejected=on_rejected,
+            on_off_schema=on_off_schema,
         )
 
     def _emit(item: tuple[str, list[Block]]) -> tuple[str, str]:

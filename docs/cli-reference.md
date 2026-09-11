@@ -808,6 +808,7 @@ ungrounded snippets); the `dg:origin` boxes themselves are always written
 into `<stem>.dgml.xml` regardless.
 | `--max-parallel-calls <n>` | `4` | Max documents transcribed concurrently (windows *within* a document stay serial). The LLM call is network-bound, so threads overlap the latency. Set to `1` to disable. Tune to your provider's RPM tier — e.g. Gemini free ~10-15 RPM, Gemini paid Flash 500 RPM, OpenAI free 500 RPM, Anthropic tier-1 ~50 RPM. |
 | `--schema-path <f>` | none | The tag schema to label against, in any of four forms detected by **content** (not by file extension) — see [Supplying your own tag schema](#supplying-your-own-tag-schema). Supplying a schema means the generated DGML uses **those tag names and no others**: the planning pass is skipped and the vocabulary is closed. Content whose role has no matching tag is **not** dropped — it renders as `dg:chunk` with its text, structure, and `dg:origin` intact. Role descriptions, curated examples, and kind all feed the labeling prompt; the tag hierarchy (`parent_role`) seeds entity-container grouping. To let labeling invent its own vocabulary instead, don't supply a schema. |
+| `--extend-schema` | off | Treat the supplied schema as a **foundation** rather than the whole vocabulary: your tag names are reused wherever one fits, and labeling may coin a new name for a recurring role your schema doesn't cover. Coined names are reported per file under `added_concepts` — the candidate list for your next revision. Requires a supplied schema (`--schema-path`, or one a previous run remembered); errors without one. The mode is **per-run**, not remembered — a later run with no flags goes back to strict. |
 | `--no-roster` | off | Disable automatic vocabulary reuse. By default an incremental generate seeds labeling from the docset's own `authored-schema.json` (whatever a previous `--schema-path` run supplied), else its derived `schema.json` (full fidelity: descriptions, observed examples, kind, hierarchy), else the flat `cache/concept_roster.json`, so newly-added documents stay tag-consistent with the existing docset; this flag labels them in isolation instead. A remembered **authored** schema closes the vocabulary exactly as `--schema-path` does; a schema the pipeline **derived** only seeds, and labeling keeps coining. Only the authored slot seeds entity-container grouping. Ignored when `--schema-path` is given. |
 | `--no-semlinks` | off | Skip the final semantic-link pass. By default each grounded `<stem>.dgml.xml` gets semantic links added in place — relationships the tree's nesting can't capture, written as `dg:itemprop` (predicate) + `dg:href` (`#id`, or space-separated `#id`s) on the subject, with `xml:id`s assigned to both ends. Covers references (`references`, `incorporates`, `signatoryOf`, …), relative dates (`relativeTo`/`effectiveOn`, ISO-8601 offset in `dg:value`), and derived values (`greaterOf`/`lesserOf` formulas, `escalates`, `valueFrom`). The model proposes links on the labeling model (`generation.label_model`), then a skeptical pass verifies them. Each converted file's `results` entry carries a `links` count. |
 | `--no-semlink-cache` | off | Always call the model for the semantic-link pass. By default the pass is cached on what the model actually reads — tag names and text, plus the labeling model, the link prompts, and whether the review pass runs. Attributes are deliberately excluded, because the prompt never shows them: grounding a document or renaming a namespace prefix does not change its links, so those runs replay the cache instead of paying again. The cache stores the links themselves, not a second copy of the XML, and they are written onto whatever the current render produced. This flag forces a fresh call — use it when something the key cannot see has changed, such as a provider-side model update behind a stable model id. |
@@ -926,9 +927,23 @@ Errors (run-level, error envelope + exit 1):
 `--schema-path` takes the vocabulary you want to see in the generated DGML.
 The pipeline then stops inventing one and labels against yours instead.
 
-It is deliberately all-or-nothing. There is no flag to apply your schema
-partly: if you hand over a vocabulary, that vocabulary is what comes out. If
-you would rather the pipeline invent one, don't hand one over.
+There are two ways to use it, for two different situations:
+
+| you want | use | what comes out |
+|---|---|---|
+| only your vocabulary | `--schema-path X` | your tag names and **no others** |
+| your vocabulary, plus whatever you missed | `--schema-path X --extend-schema` | your names reused first; new names coined only for roles you didn't cover, each reported back |
+
+**Strict** is for when the schema *is* the specification — a fixed downstream
+contract, a regulated vocabulary, anything where an unexpected tag is a defect.
+**Extend** is for when you have a solid foundation but expect gaps: you get your
+vocabulary applied first and a reviewed list of what the documents needed beyond
+it, which you fold into the next revision.
+
+Neither mode plans a vocabulary of its own, and both keep every downstream pass
+— grounding, semantic links, value typing, table and list consolidation — exactly
+as a default run does. What a supplied schema removes is vocabulary *invention*,
+not augmentation.
 
 > **This drives the whole document, not field extraction.** The schema is
 > applied to *every* element of the document tree — heading, clause, paragraph,
@@ -1014,8 +1029,10 @@ carrying its full text, its structural role, and its `dg:origin` page
 coordinates. A short schema does not produce a short document — it produces the
 same document with fewer semantically-tagged elements.
 
-**Read the rejection list.** Every converted file's `results` entry gains
-`unmatched_concepts` whenever a concept was refused:
+**Read the off-schema list.** Every converted file's `results` entry reports
+the concepts that fell outside your schema — as `unmatched_concepts` under
+strict (refused, so this is what your schema is missing) or `added_concepts`
+under `--extend-schema` (coined and used, so this is what to consider adding):
 
 ```json
 { "status": "converted", "file_id": "k7q3xb91pmrf", "source": "order-a.pdf",
@@ -1041,11 +1058,14 @@ which the derived `schema.json` never overwrites — so a later `generate` with 
 flags re-seeds from what you wrote, not from `yours + everything coined`.
 
 ```bash
-# Pin the vocabulary for a docset
+# Strict: the output carries your tag names and no others
 uv run dgml docset generate <docset_id> --schema-path ./my-schema.json
 
-# Later runs remember it — no need to re-supply the file
+# Later runs remember the schema — no need to re-supply the file
 uv run dgml docset generate <docset_id>
+
+# Extend: your vocabulary first, gaps coined and reported as added_concepts
+uv run dgml docset generate <docset_id> --schema-path ./my-schema.json --extend-schema
 ```
 
 **Ordinary incremental runs are unaffected.** Closure follows *authorship*, not

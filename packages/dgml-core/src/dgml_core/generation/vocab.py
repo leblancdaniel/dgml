@@ -66,9 +66,29 @@ class TagVocab:
     names: frozenset[str]
     index: Mapping[str, str]
     closed: bool
+    #: Whether *names* came from a vocabulary a PERSON wrote, as opposed to one
+    #: the pipeline derived from its own previous labels. Three states matter
+    #: downstream, and this plus ``closed`` distinguishes them:
+    #:   authored + closed  — STRICT: these names and no others;
+    #:   authored + open    — EXTEND: these names first, coin only for a genuine
+    #:                        gap, and report every coinage as a schema candidate;
+    #:   not authored       — the long-standing behavior, whether seeded from a
+    #:                        derived schema or not seeded at all.
+    #: A derived seed must never be reported as "you missed these" — the
+    #: pipeline writing about its own output is not a gap in anyone's schema.
+    authored: bool = False
+
+    @property
+    def extends(self) -> bool:
+        """EXTEND mode: an authored vocabulary that may still be added to."""
+        return self.authored and not self.closed
+
+    def is_supplied(self, name: str) -> bool:
+        """Whether *name* is one of the authoritative spellings."""
+        return name in self.names
 
     @classmethod
-    def build(cls, names: Iterable[str], *, closed: bool) -> TagVocab:
+    def build(cls, names: Iterable[str], *, closed: bool, authored: bool = False) -> TagVocab:
         """Build a vocabulary from authoritative spellings, in priority order.
 
         Two names that squash alike (``ABCorp`` / ``AbCorp``) are a genuine
@@ -90,6 +110,7 @@ class TagVocab:
             names=frozenset(authoritative),
             index=MappingProxyType(index),
             closed=closed,
+            authored=authored,
         )
 
     def resolve(self, raw: str) -> str | None:

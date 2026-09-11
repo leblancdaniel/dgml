@@ -2450,7 +2450,7 @@ def test_label_chunk_recovers_by_splitting_on_unparseable_reply(
         label_tag="c01",
         warnings=warnings,
         vocab=OPEN_VOCAB,
-        rejected=[],
+        off_schema=[],
     )
     assert err is None
     assert all(b.concept == "Revenue" for b in chunk)  # every block recovered
@@ -2485,7 +2485,7 @@ def test_label_chunk_does_not_split_on_call_error(monkeypatch: pytest.MonkeyPatc
         label_tag="c01",
         warnings=warnings,
         vocab=OPEN_VOCAB,
-        rejected=[],
+        off_schema=[],
     )
     assert err is None  # RuntimeError is soft, not a reachability error
     assert calls["n"] == 2  # retried once, never split
@@ -2610,7 +2610,7 @@ def test_closed_vocabulary_keeps_the_emitted_tags_a_subset_of_the_schema(
     from dgml_core.generation.schema import parse_authored_schema
 
     schema, _notes = parse_authored_schema("CustomerName\nNotes\nLine Items\nPaymentTerms\n")
-    vocab = TagVocab.build(schema.tags, closed=True)
+    vocab = TagVocab.build(schema.tags, closed=True, authored=True)
     docs = {
         "a.pdf": [
             _b("heading", "b1", text="Payment Terms"),
@@ -2641,7 +2641,7 @@ def test_closed_vocabulary_keeps_the_emitted_tags_a_subset_of_the_schema(
         config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
         schema_seed=schema,
         vocab=vocab,
-        on_rejected=lambda name, tally: rejected.__setitem__(name, tally),
+        on_off_schema=lambda name, tally: rejected.__setitem__(name, tally),
     )
     xml = render_dgml(docs["a.pdf"], header=_HEADER, vocab=vocab)
     emitted = {el.tag.rsplit("}", 1)[-1] for el in etree.fromstring(xml.encode()).iter()}
@@ -2892,3 +2892,126 @@ def test_unseeded_runs_are_exactly_the_pre_vocabulary_behavior() -> None:
     # but it is exactly what the unseeded pipeline has always done, which is
     # the point of this test.
     assert "<docset:Order " in default
+
+
+def _extend(*names: str) -> TagVocab:
+    return TagVocab.build(names, closed=False, authored=True)
+
+
+def test_extend_vocab_reuses_supplied_names_and_coins_only_for_gaps() -> None:
+    """EXTEND is the middle mode: the authored names still win every match they
+    can, and only a genuinely new role produces a new tag."""
+    vocab = _extend("CustomerName", "PaymentTerms")
+    # Supplied names resolve exactly as under strict, including tolerant forms —
+    # a coined near-duplicate of a supplied tag is the failure this prevents.
+    for raw in ("CustomerName", "customername", "Customer_Name", "customer name"):
+        assert vocab.resolve(raw) == "CustomerName"
+    # A genuine gap is coined rather than refused (the difference from strict).
+    assert vocab.resolve("DeliveryDate") == "DeliveryDate"
+    assert _closed("CustomerName", "PaymentTerms").resolve("DeliveryDate") is None
+    # Model noise is still filtered on the way in.
+    assert vocab.resolve("Paragraph2") is None
+
+
+def test_extend_reports_coined_names_and_strict_reports_refusals() -> None:
+    """One channel, two meanings: what a strict run threw away, and what an
+    extend run added. The second is the user's candidate list for schema v2."""
+    blocks = [
+        _b("p", "b1", text="Acme Corp is the customer."),
+        _b("p", "b2", text="Delivery is due 1 March."),
+    ]
+    labels = {
+        "b1": {"concept": "customer_name"},  # tolerant hit on a supplied tag
+        "b2": {"concept": "DeliveryDate"},  # a role the schema does not cover
+    }
+
+    strict_blocks = [Block(**vars(b)) for b in blocks]
+    strict_out: list[str] = []
+    apply_labels(
+        strict_blocks,
+        labels,
+        vocab=TagVocab.build(["CustomerName"], closed=True, authored=True),
+        off_schema=strict_out,
+    )
+    assert [b.concept for b in strict_blocks] == ["CustomerName", ""]
+    assert strict_out == ["DeliveryDate"]  # refused
+
+    ext_blocks = [Block(**vars(b)) for b in blocks]
+    ext_out: list[str] = []
+    apply_labels(ext_blocks, labels, vocab=_extend("CustomerName"), off_schema=ext_out)
+    assert [b.concept for b in ext_blocks] == ["CustomerName", "DeliveryDate"]
+    assert ext_out == ["DeliveryDate"]  # coined AND used
+    # A supplied tag reached via a tolerant form is NOT an addition — reporting
+    # it would send the author chasing a gap that does not exist.
+    assert "customer_name" not in ext_out and "CustomerName" not in ext_out
+
+
+def test_a_derived_seed_reports_nothing_as_off_schema() -> None:
+    """Only an AUTHORED vocabulary has gaps worth reporting. The pipeline naming
+    something outside a vocabulary it wrote itself is not a gap in anyone's
+    schema, and surfacing it as one would be noise."""
+    blocks = [_b("p", "b1", text="x")]
+    out: list[str] = []
+    apply_labels(
+        blocks,
+        {"b1": {"concept": "SomethingNew"}},
+        vocab=TagVocab.build(["OldTag"], closed=False),  # derived seed: authored=False
+        off_schema=out,
+    )
+    assert blocks[0].concept == "SomethingNew"
+    assert out == []
+
+
+def test_each_vocabulary_mode_sends_its_own_roster_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three modes, three framings. Getting this wrong is expensive in both
+    directions — an exhaustive framing on a growable vocabulary suppresses
+    labeling, and a merely-suggestive one on an authored vocabulary lets coined
+    names drown it. Both were measured; see the notes in prompts.yaml."""
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+    sent: list[str] = []
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        sent.append("\n\n".join(str(part["text"]) for part in kw["user_content"]))
+        return json.dumps({"labels": {"b1": {"concept": "PaymentTerms"}}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    modes = {
+        "strict": TagVocab.build(schema.tags, closed=True, authored=True),
+        "extend": TagVocab.build(schema.tags, closed=False, authored=True),
+        "derived": TagVocab.build(schema.tags, closed=False),
+    }
+    intros = {
+        "strict": "roster_closed_intro",
+        "extend": "roster_extend_intro",
+        "derived": "roster_intro",
+    }
+    for mode, vocab in modes.items():
+        sent.clear()
+        label_documents(
+            {"a.pdf": [_b("heading", "b1", text="Payment Terms")]},
+            config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+            schema_seed=schema,
+            vocab=vocab,
+        )
+        assert sent, mode
+        for other, key in intros.items():
+            present = get_prompt(key) in sent[0]
+            assert present is (other == mode), f"{mode} run sent {key}"
+
+
+def test_extend_mode_still_protects_against_near_duplicate_tags() -> None:
+    """The measured failure of plain seeded-open was near-duplicates fragmenting
+    the vocabulary (`CategoryPricing` beside a supplied `CategoryPrice`). The
+    resolver absorbs every formatting variant, so only a genuinely different
+    WORD can coin — which is the line the prompt is also asked to hold."""
+    vocab = _extend("CategoryPrice", "OrderLine")
+    for variant in ("categoryprice", "Category_Price", "CATEGORY-PRICE", "category price"):
+        assert vocab.resolve(variant) == "CategoryPrice"
+    # Word-level differences DO coin — the resolver cannot know these are the
+    # same role, which is exactly why the prompt carries the instruction and
+    # why every coinage is reported back for the author to judge.
+    assert vocab.resolve("CategoryPricing") == "CategoryPricing"
