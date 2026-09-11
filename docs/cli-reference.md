@@ -940,6 +940,15 @@ contract, a regulated vocabulary, anything where an unexpected tag is a defect.
 vocabulary applied first and a reviewed list of what the documents needed beyond
 it, which you fold into the next revision.
 
+> **Extend needs a substantially complete schema to behave as intended.** It
+> fills gaps in a vocabulary; it does not build one. Measured across six
+> docsets, the share of tagged values landing under *your* tags tracks how
+> complete your schema is: schemas of 36–41 tags held 73–89% and coined a
+> handful of names, while schemas of 12–13 tags held only 16–48% and coined
+> around 150 — at which point the run is a no-schema run with a few tags
+> pinned. If your schema is a rough sketch, extend will bury it; write more of
+> it first, or use strict and read `unmatched_concepts` to find what's missing.
+
 > **Extend is an authoring aid, not a setting to leave on.** Your supplied tags
 > are stable across runs by construction; the names it *coins* are not. Measured
 > over four runs of the same documents, 62–82% of coined names appeared in only
