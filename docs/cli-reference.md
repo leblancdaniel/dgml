@@ -940,14 +940,20 @@ contract, a regulated vocabulary, anything where an unexpected tag is a defect.
 vocabulary applied first and a reviewed list of what the documents needed beyond
 it, which you fold into the next revision.
 
-> **Extend needs a substantially complete schema to behave as intended.** It
-> fills gaps in a vocabulary; it does not build one. Measured across six
-> docsets, the share of tagged values landing under *your* tags tracks how
-> complete your schema is: schemas of 36–41 tags held 73–89% and coined a
-> handful of names, while schemas of 12–13 tags held only 16–48% and coined
-> around 150 — at which point the run is a no-schema run with a few tags
-> pinned. If your schema is a rough sketch, extend will bury it; write more of
-> it first, or use strict and read `unmatched_concepts` to find what's missing.
+> **How much of the output stays under your tags depends on how much of the
+> document your schema covers** — which is about your documents, not about how
+> many tags you wrote. On short, regular documents a 36-tag schema carried
+> 73–89% of tagged values; on long, dense ones the same size carried 25%, with
+> 265 names coined around it. Tag count alone predicts nothing: measured across
+> ten docsets, schemas of 10, 23, 24 and 36 tags produced dominance of 12%,
+> 42%, 10% and 25% respectively.
+>
+> The practical consequence: on rich documents extend will add far more than it
+> reuses, and `added_concepts` becomes a long list rather than a short one.
+> That is the mode working — those are real recurring roles your schema does
+> not name — but it means the output is mostly not your vocabulary. If you want
+> your vocabulary to dominate a dense corpus, either grow the schema until it
+> covers the document, or use strict and let unmatched content stay untagged.
 
 > **Extend is an authoring aid, not a setting to leave on.** Your supplied tags
 > are stable across runs by construction; the names it *coins* are not. Measured

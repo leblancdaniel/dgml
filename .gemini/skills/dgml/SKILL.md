@@ -377,11 +377,14 @@ coinage reported per file under `added_concepts` so you can fold it into the
 next revision. Strict reports the mirror image as `unmatched_concepts` — what it
 had to refuse. The mode is per-run; the schema is remembered, the flag is not.
 
-Extend needs a **substantially complete** schema: it fills gaps, it does not
-build a vocabulary. Measured, a 36–41 tag schema keeps 73–89% of tagged values
-under the user's own names while a 12–13 tag one keeps just 16–48% and coins
-~150 names — a rough sketch gets buried. With a sketch, prefer strict and read
-`unmatched_concepts` to find what to add.
+How much output stays under the user's tags depends on **how much of the
+document the schema covers**, not on tag count — measured across ten docsets,
+schemas of 10/23/24/36 tags gave dominance of 12%/42%/10%/25%, and the same
+36-tag size carried 73–89% on short regular documents but 25% on long dense
+ones. On rich documents extend adds far more than it reuses and
+`added_concepts` gets long: that is the mode working (real recurring roles the
+schema doesn't name), but the output is then mostly not the user's vocabulary.
+To keep it dominant on a dense corpus, grow the schema or use strict.
 
 Use extend as a **step in a loop, not a standing setting**: the tags it coins
 are unstable run-to-run (measured: 62–82% of coined names appeared in only one
