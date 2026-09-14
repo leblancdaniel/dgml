@@ -2972,10 +2972,15 @@ def test_each_vocabulary_mode_sends_its_own_roster_prompt(
     from dgml_core.generation.schema import parse_authored_schema
 
     schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
-    sent: list[str] = []
+    sent: list[tuple[str, str]] = []
 
     def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
-        sent.append("\n\n".join(str(part["text"]) for part in kw["user_content"]))
+        sent.append(
+            (
+                str(kw.get("system_prompt", "")),
+                "\n\n".join(str(part["text"]) for part in kw["user_content"]),
+            )
+        )
         return json.dumps({"labels": {"b1": {"concept": "PaymentTerms"}}})
 
     monkeypatch.setattr(llm, "call", fake_call)
@@ -2997,9 +3002,12 @@ def test_each_vocabulary_mode_sends_its_own_roster_prompt(
             schema_seed=schema,
             vocab=vocab,
         )
-        assert sent, mode
+        # Extend also makes a gap-planning call, whose input embeds the same
+        # skeletons — so discriminate on the SYSTEM prompt, not the listing.
+        labeling = [t for sys_p, t in sent if sys_p == get_prompt("label_system")]
+        assert labeling, mode
         for other, key in intros.items():
-            present = get_prompt(key) in sent[0]
+            present = get_prompt(key) in labeling[0]
             assert present is (other == mode), f"{mode} run sent {key}"
 
 
@@ -3015,3 +3023,102 @@ def test_extend_mode_still_protects_against_near_duplicate_tags() -> None:
     # same role, which is exactly why the prompt carries the instruction and
     # why every coinage is reported back for the author to judge.
     assert vocab.resolve("CategoryPricing") == "CategoryPricing"
+
+
+def test_extend_plans_its_additions_instead_of_improvising_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EXTEND gets Pass B.1 back, as a gap-filling call.
+
+    Skipping planning on any seed is right under STRICT — a planned concept
+    would be refused at ingest, so the call could only waste money — but wrong
+    once coining is allowed: it left the supplement to be invented per
+    document, mid-labeling, with nothing looking across documents. Measured,
+    62-82% of coined names then appeared in only one of four runs of the same
+    corpus.
+    """
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+    seen: list[tuple[str, str]] = []
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        system = str(kw.get("system_prompt", ""))
+        text = "\n\n".join(str(part["text"]) for part in kw["user_content"])
+        seen.append((system, text))
+        if system == get_prompt("plan_gaps_system"):
+            return json.dumps({"concepts": {"DeliveryDate": "when delivery is due"}})
+        return json.dumps({"labels": {}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    monkeypatch.setattr(
+        llm,
+        "call_with_refinement",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("gap planning must not refine")),
+    )
+    docs = {"a.pdf": [_b("heading", "b1", text="Payment Terms")]}
+    label_documents(
+        docs,
+        config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+        schema_seed=schema,
+        vocab=TagVocab.build(schema.tags, closed=False, authored=True),
+    )
+    plans = [(sys, txt) for sys, txt in seen if sys == get_prompt("plan_gaps_system")]
+    assert len(plans) == 1, "extend should plan its gaps exactly once"
+    # The planner is shown the authored vocabulary, so "is this already
+    # covered?" is answerable before it reads a single skeleton.
+    assert "EXISTING VOCABULARY (1 concepts)" in plans[0][1]
+    assert "- PaymentTerms — the payment clause" in plans[0][1]
+    # …and its proposal reaches the labeling prompt as a PLANNED entry, under
+    # the softer tier, leaving the authored entry in the authoritative one.
+    labeling = [txt for sys_p, txt in seen if sys_p == get_prompt("label_system")]
+    assert get_prompt("roster_extend_intro") in labeling[0]
+    assert get_prompt("roster_planned_intro") in labeling[0]
+    assert "- DeliveryDate — when delivery is due" in labeling[0]
+
+
+def test_strict_still_skips_planning_entirely(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planned concept would be refused at ingest under strict, so planning
+    it would waste a call AND advertise names the resolver then discards."""
+    from dgml_core.generation.schema import parse_authored_schema
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        assert str(kw.get("system_prompt", "")) != get_prompt("plan_gaps_system")
+        assert str(kw.get("system_prompt", "")) != get_prompt("plan_system")
+        return json.dumps({"labels": {}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    label_documents(
+        {"a.pdf": [_b("heading", "b1", text="Payment Terms")]},
+        config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+        schema_seed=schema,
+        vocab=TagVocab.build(schema.tags, closed=True, authored=True),
+    )
+
+
+def test_gap_planning_cannot_shadow_an_authored_name() -> None:
+    """A "gap" that is really a variant of a supplied name is dropped before it
+    reaches the roster — the resolver would fold a formatting variant back
+    anyway, and a word-level variant is the fragmentation the prompt forbids."""
+    from dgml_core.generation.label import plan_concept_roster
+
+    captured: dict[str, Any] = {}
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        captured["system"] = kw.get("system_prompt")
+        return json.dumps(
+            {"concepts": {"payment_terms": "dup", "PaymentTerms": "dup", "DeliveryDate": "new"}}
+        )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(llm, "call", fake_call)
+        gaps = plan_concept_roster(
+            {"a.pdf": [_b("heading", "b1", text="Payment Terms")]},
+            config=llm.LLMConfig(model="anthropic/claude-haiku-4-5"),
+            refine=False,
+            existing={"PaymentTerms": "the payment clause"},
+        )
+    assert set(gaps) == {"DeliveryDate"}
+    assert captured["system"] == get_prompt("plan_gaps_system")
