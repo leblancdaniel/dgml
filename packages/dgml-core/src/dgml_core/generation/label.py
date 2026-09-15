@@ -1782,7 +1782,12 @@ def label_documents(
         if off_schema:
             tally = Counter(off_schema)
             shown = ", ".join(f"{name} x{n}" if n > 1 else name for name, n in tally.most_common(5))
-            fate = "left untagged" if vocab.closed else "coined and used"
+            # Keyed on `added`, not `closed`. A BOUNDED vocabulary is closed
+            # AND has additions, and the names on this channel are then
+            # planned concepts being USED — reporting them as "left untagged"
+            # (as keying on `closed` alone did) tells the author the opposite
+            # of what happened.
+            fate = "left untagged" if (vocab.closed and not vocab.added) else "used"
             log(
                 f"Pass B: {doc_name}: {len(off_schema)} concept use(s) outside the schema "
                 f"({len(tally)} distinct) {fate}: {shown}" + (" …" if len(tally) > 5 else "")
