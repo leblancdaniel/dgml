@@ -403,9 +403,12 @@ Four input forms, detected by content:
 - **`full-schema.rnc`** — the same, as commented RELAX NG Compact; the
   human-friendly editing surface, and it reverses losslessly.
 
-Write `role` descriptions; skip `examples` — measured on 4 docsets, example
-values moved macro F1 by −1.4/−0.0 and did not help even when drawn from the
-scored documents' own reference values.
+Write `role` descriptions; skip `examples`. Measured three ways on 4 docsets
+— realistic values, the scored documents' own reference values, and short
+canonical values with nothing truncated — none beat supplying none, and the
+cleanest test lost 4.8 F1. An example behaves as a fence rather than a hint:
+content that doesn't resemble it is read as NOT that tag, and the model
+retreats to a broader tag carrying no examples.
 
 Tag names are taken **verbatim** — `Notes`, `Details` and `Line Items` all
 survive; only XML-illegal characters become underscores (`Line Items` →
