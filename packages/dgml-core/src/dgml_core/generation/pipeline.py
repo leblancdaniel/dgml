@@ -39,6 +39,7 @@ from dgml_core.generation.label import (
     _parse_labels_json,
     apply_labels,
     label_documents,
+    plan_concept_roster,
     propagate_list_consistency,
     propagate_table_consistency,
     wrap_detected_values,
@@ -300,6 +301,44 @@ def convert_batch(
         operation=OPERATION_LABEL,
     )
     label_config.context = {"doc_count": len(docs)}
+
+    # An extendable authored vocabulary gets its additions PLANNED, once, here
+    # — before labeling, because the vocabulary they form has to govern the
+    # render too, and `render_dgml` runs after `label_documents` returns.
+    #
+    # Coining freely during labeling produced an output vocabulary LARGER than
+    # an unseeded run's (299 distinct tags against 156 on one docset, of which
+    # 35 were the user's), because supplying a schema skips the planning pass
+    # and leaves labeling inventing per document with nothing looking across
+    # them. One gap-planning call over every skeleton names the shared roles
+    # the schema misses; closing over the union then keeps the additions a
+    # bounded, reviewable set instead of an open tail.
+    gap_seed: dict[str, str] = {}
+    if vocab.extends and opts.schema_seed is not None and docs:
+        with llm.record_usage_for(label_config):
+            gap_seed = plan_concept_roster(
+                docs,
+                config=label_config,
+                cache_dir=opts.cache_dir,
+                debug=opts.debug,
+                log=log,
+                refine=False,  # over-proposing is the failure mode here
+                existing={tag.name: tag.role for tag in opts.schema_seed.tags.values()},
+            )
+        if gap_seed:
+            vocab = vocab.with_additions(gap_seed)
+            log(
+                f"Pass B.1: vocabulary bounded at {len(vocab.supplied)} authored "
+                f"+ {len(vocab.added)} planned tag(s)"
+            )
+        else:
+            # Planning is best-effort — it returns {} both when the schema
+            # genuinely covers the documents and when the call failed. Closing
+            # on an empty result would silently turn an extend run into a
+            # strict one, which is a stricter contract than the user asked
+            # for, so degrade to unbounded coining instead.
+            log("Pass B.1: no gap concepts planned; labeling may coin unbounded")
+
     with llm.record_usage_for(label_config):
         label_documents(
             docs,
@@ -309,6 +348,7 @@ def convert_batch(
             log=log,
             roster_seed=opts.roster_seed,
             schema_seed=opts.schema_seed,
+            gap_seed=gap_seed or None,
             vocab=vocab,
             on_label_error=on_label_error,
             on_off_schema=on_off_schema,

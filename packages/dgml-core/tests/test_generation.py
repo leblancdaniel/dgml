@@ -24,6 +24,8 @@ import litellm
 import pytest
 from dgml_core import llm
 from dgml_core.generation import blocks as blocks_mod
+from dgml_core.generation import document as document_mod
+from dgml_core.generation import pipeline as pipeline_mod
 from dgml_core.generation.blocks import (
     Block,
     Span,
@@ -3015,3 +3017,120 @@ def test_extend_mode_still_protects_against_near_duplicate_tags() -> None:
     # same role, which is exactly why the prompt carries the instruction and
     # why every coinage is reported back for the author to judge.
     assert vocab.resolve("CategoryPricing") == "CategoryPricing"
+
+
+def test_extend_bounds_its_vocabulary_to_supplied_plus_planned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fix for extend's sprawl.
+
+    Coining freely during labeling produced an output vocabulary LARGER than
+    an unseeded run's — 299 distinct tags against 156 on one docset, of which
+    35 were the user's — because supplying a schema skips planning and leaves
+    labeling inventing per document. `convert_batch` now plans the additions
+    once and closes over the union, so the additions are a bounded set and
+    the render is governed by the same vocabulary the labeling was.
+    """
+    from dgml_core.generation.pipeline import ConvertOptions, convert_batch
+    from dgml_core.generation.schema import parse_authored_schema
+    from dgml_core.generation.vocab import TagVocab
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+    seen_systems: list[str] = []
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        system = str(kw.get("system_prompt", ""))
+        seen_systems.append(system)
+        if system == get_prompt("plan_gaps_system"):
+            return json.dumps({"concepts": {"DeliveryDate": "when delivery is due"}})
+        # Labeling reaches for a planned name AND for something neither the
+        # schema nor the plan covers.
+        return json.dumps(
+            {
+                "labels": {
+                    "b0001": {"concept": "PaymentTerms"},
+                    "b0002": {"concept": "DeliveryDate"},
+                    "b0003": {"concept": "SomethingNobodyPlanned"},
+                }
+            }
+        )
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    monkeypatch.setattr(document_mod, "load_document_as_pdf", lambda path, **kw: b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        pipeline_mod,
+        "transcribe_document",
+        lambda *a, **kw: [
+            _b("p", "b0001", text="Payment is due in 30 days."),
+            _b("p", "b0002", text="Delivery on 1 March."),
+            _b("p", "b0003", text="Some other role entirely."),
+        ],
+    )
+    added: dict[str, Counter[str]] = {}
+    outputs: dict[str, str] = {}
+    convert_batch(
+        [Path("a.pdf")],
+        options=ConvertOptions(
+            model="anthropic/claude-haiku-4-5",
+            label_model="anthropic/claude-haiku-4-5",
+            dgml_header=_HEADER,
+            schema_seed=schema,
+            vocab=TagVocab.build(schema.tags, closed=False, authored=True),
+        ),
+        on_output=lambda name, xml: outputs.__setitem__(name, xml),
+        on_off_schema=lambda name, tally: added.__setitem__(name, tally),
+    )
+    assert get_prompt("plan_gaps_system") in seen_systems, "gap planning must run"
+    xml = outputs["a.pdf"]
+    emitted = {el.tag.rsplit("}", 1)[-1] for el in etree.fromstring(xml.encode()).iter()} - {
+        "chunk"
+    }
+    # Bounded: the supplied tag and the PLANNED one render; the unplanned one
+    # does not. Before this fix it would have rendered too, unbounded.
+    assert emitted == {"PaymentTerms", "DeliveryDate"}
+    assert "SomethingNobodyPlanned" not in xml
+    # …and its text is still there, as under strict.
+    assert "Some other role entirely." in xml
+    # Only the PLANNED name is reported as an addition — the supplied one is
+    # not a gap, and reporting it would send the author chasing nothing.
+    assert set(added["a.pdf"]) == {"DeliveryDate"}
+
+
+def test_extend_stays_unbounded_when_gap_planning_yields_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Planning is best-effort and returns {} both when the schema genuinely
+    covers the documents and when the call failed. Closing on an empty result
+    would silently turn extend into strict — a stricter contract than was
+    asked for — so an empty plan degrades to unbounded coining."""
+    from dgml_core.generation.pipeline import ConvertOptions, convert_batch
+    from dgml_core.generation.schema import parse_authored_schema
+    from dgml_core.generation.vocab import TagVocab
+
+    schema, _ = parse_authored_schema('{"PaymentTerms": "the payment clause"}')
+
+    def fake_call(config: llm.LLMConfig, **kw: Any) -> str:
+        if str(kw.get("system_prompt", "")) == get_prompt("plan_gaps_system"):
+            raise RuntimeError("planner unreachable")
+        return json.dumps({"labels": {"b0001": {"concept": "CoinedAnyway"}}})
+
+    monkeypatch.setattr(llm, "call", fake_call)
+    monkeypatch.setattr(document_mod, "load_document_as_pdf", lambda path, **kw: b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        pipeline_mod,
+        "transcribe_document",
+        lambda *a, **kw: [_b("p", "b0001", text="Some role.")],
+    )
+    outputs: dict[str, str] = {}
+    convert_batch(
+        [Path("a.pdf")],
+        options=ConvertOptions(
+            model="anthropic/claude-haiku-4-5",
+            label_model="anthropic/claude-haiku-4-5",
+            dgml_header=_HEADER,
+            schema_seed=schema,
+            vocab=TagVocab.build(schema.tags, closed=False, authored=True),
+        ),
+        on_output=lambda name, xml: outputs.__setitem__(name, xml),
+    )
+    assert "<docset:CoinedAnyway" in outputs["a.pdf"]

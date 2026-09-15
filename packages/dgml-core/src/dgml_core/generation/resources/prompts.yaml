@@ -223,6 +223,46 @@
 
   Output JSON only:
   {"concepts": {"<concept>": "<one-line role description>", ...}}
+# Gap planning for --extend-schema. Rationale: supplying a schema used to
+# disable Pass B.1 entirely, which is right under strict (a planned concept
+# would be refused at ingest anyway) but wrong once coining is allowed —
+# it left the supplement to be invented per document, mid-labeling, with
+# nothing looking across documents. Measured, that produced a supplement in
+# which 62-82% of coined names appeared in only one of four runs of the same
+# corpus. This call gives the additions the same cross-document planning the
+# unseeded path has always had.
+"plan_gaps_system": |
+  You extend an EXISTING concept vocabulary for a set of related documents.
+
+  You are shown two things: the vocabulary its owner already wrote, and the
+  structural skeleton (headings, form fields, table rows, first list items) of
+  every document. Your job is to propose concepts for the RECURRING ROLES THE
+  EXISTING VOCABULARY DOES NOT COVER — and nothing else.
+
+  Rules, in order of importance:
+  - Propose NOTHING that an existing concept already covers. Check the list
+    first, every time. If a role is covered, it is not a gap.
+  - Never propose a VARIANT of an existing name. If `CategoryPrice` exists, do
+    not propose `CategoryPricing`, `CategoryPrices`, or `PriceByCategory`.
+    Differences of wording, number, or word order are not new concepts.
+  - Propose only roles that RECUR across the documents. A one-off is not worth
+    a shared concept; the per-document labeling can handle it.
+  - Container roles are the most commonly missed: authors write the fields and
+    forget the box around them (an order's line-item collection, a signature
+    block, a fee schedule). Look for repeating groups that have no container.
+  - Name them the way the existing vocabulary is named — same style, same level
+    of specificity — so the combined list reads as ONE vocabulary.
+
+  Concepts are PascalCase role names. Name the ROLE, never the value. Never
+  include structural or discourse words ("Section", "Clause", "Item",
+  "Heading", "Paragraph", "List", "Title"). Never propose generic catch-alls
+  ("Information", "Details", "Data", "Other").
+
+  A SHORT, well-judged list is the goal. Proposing few or none is a perfectly
+  good answer when the existing vocabulary already covers the documents.
+
+  Output JSON only, and include ONLY your additions:
+  {"concepts": {"<concept>": "<one-line role description>", ...}}
 "roster_complete": |-
   Review your roster against the document skeletons above. A first-pass roster
   routinely MISSES recurring roles. ADD every recurring section, field, column,

@@ -281,13 +281,17 @@ def _resolved(raw: str, vocab: TagVocab, off_schema: list[str] | None) -> str:
     """
     name = vocab.resolve(raw)
     if off_schema is not None and vocab.authored:
-        # Strict refuses (name is None); extend coins a name that is not one of
-        # the supplied spellings. Both are "went outside the schema".
-        outside = name is None if vocab.closed else name is not None and not vocab.is_supplied(name)
-        if outside:
-            recorded = (raw.strip() if vocab.closed else name) or ""
-            if recorded:
-                off_schema.append(recorded)
+        # Three ways a concept lands outside the SUPPLIED names, all recorded
+        # on one channel and labeled by the caller:
+        #   strict  — refused outright (name is None); "your schema is missing this"
+        #   extend  — coined ad hoc and used; "this was added"
+        #   bounded — resolved to a PLANNED addition; also "this was added",
+        #             but from a set decided up front rather than per document.
+        if name is None:
+            if vocab.closed and not vocab.added and raw.strip():
+                off_schema.append(raw.strip())
+        elif not vocab.is_supplied(name):
+            off_schema.append(name)
     return name or ""
 
 
@@ -945,6 +949,7 @@ def plan_concept_roster(
     debug: bool = False,
     log: Callable[[str], None] = lambda _m: None,
     refine: bool = True,
+    existing: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """ONE call over every document's skeleton → the shared concept roster.
 
@@ -957,6 +962,16 @@ def plan_concept_roster(
     recurring roles it missed in the draft (add-only — no merge/rename), which
     improves roster completeness and cross-run stability at the cost of one
     extra call. Set ``refine=False`` to skip it.
+
+    *existing* switches this into GAP-PLANNING mode for a run that already has
+    a user-supplied vocabulary but is allowed to add to it
+    (``--extend-schema``). The supplied concepts are shown alongside the
+    skeletons and the model is asked for the recurring roles they do NOT cover.
+    This is what gives the additions the same cross-document planning the
+    unseeded path has always had: without it the supplement is invented per
+    document, mid-labeling, with nothing looking across documents — measured,
+    that left 62-82% of coined names appearing in only one of four runs of the
+    same corpus. Returns ONLY the additions; the caller merges them.
     """
     # Cap the planning input. Sample the LARGEST documents (most blocks): a
     # richer skeleton seeds a more complete roster, so the biggest docs cover
@@ -974,9 +989,28 @@ def plan_concept_roster(
             "(largest skeletons) for roster planning"
         )
 
-    log(f"Pass B.1: planning concept roster from {len(planning_docs)} doc skeleton(s)...")
+    gap_mode = existing is not None
+    what = "vocabulary gaps" if gap_mode else "concept roster"
+    log(f"Pass B.1: planning {what} from {len(planning_docs)} doc skeleton(s)...")
     listing = render_skeleton_listing(planning_docs)
-    cache_write(cache_dir, "plan_roster_input.txt", listing, debug=debug)
+    if gap_mode:
+        # The supplied vocabulary leads, so "does an existing concept already
+        # cover this?" is answerable before the skeletons are even read.
+        supplied = "\n".join(
+            f"- {name}" + (f" — {desc[:100]}" if desc else "")
+            for name, desc in sorted((existing or {}).items())
+        )
+        listing = (
+            f"EXISTING VOCABULARY ({len(existing or {})} concepts):\n{supplied}\n\n"
+            f"DOCUMENT SKELETONS:\n{listing}"
+        )
+    system_prompt = prompt("plan_gaps_system") if gap_mode else PLAN_SYSTEM_PROMPT
+    cache_write(
+        cache_dir,
+        "plan_gaps_input.txt" if gap_mode else "plan_roster_input.txt",
+        listing,
+        debug=debug,
+    )
     try:
         if refine:
             # Two-turn grounded build: draft the roster, then have the model
@@ -984,7 +1018,7 @@ def plan_concept_roster(
             # Add-only — no synonym merging — so it can only raise recall.
             draft_raw, raw = llm.call_with_refinement(
                 config,
-                system_prompt=PLAN_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_content=[{"type": "text", "text": listing}],
                 refine_instruction=[{"type": "text", "text": prompt("roster_complete")}],
                 cache=True,
@@ -996,14 +1030,14 @@ def plan_concept_roster(
             # Single-call roster: the draft only, without the add-only completion turn.
             raw = llm.call(
                 config,
-                system_prompt=PLAN_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_content=[{"type": "text", "text": listing}],
                 cache=True,
             )
         cache_write(cache_dir, "plan_roster_raw.json", strip_fences(raw), debug=debug)
         payload = _parse_labels_json(raw)
     except Exception as exc:
-        log(f"[label] roster planning failed ({exc}); labeling proceeds without it")
+        log(f"[label] {what} planning failed ({exc}); labeling proceeds without it")
         return {}
     roster: dict[str, str] = {}
     for name, description in (payload.get("concepts", {}) or {}).items():
@@ -1012,7 +1046,17 @@ def plan_concept_roster(
             # Keep the FULL description — it becomes the schema.json `role`.
             # render_roster truncates for the compact in-prompt listing.
             roster[concept] = str(description)
-    log(f"Pass B.1: planned {len(roster)} shared concept(s)")
+    if gap_mode:
+        # Never let a "gap" shadow a supplied name: the resolver would fold a
+        # formatting variant back onto the authored spelling anyway, and a
+        # word-level variant is exactly the fragmentation this prompt forbids.
+        supplied_keys = {re.sub(r"[^a-z0-9]", "", n.lower()) for n in (existing or {})}
+        roster = {
+            n: d
+            for n, d in roster.items()
+            if re.sub(r"[^a-z0-9]", "", n.lower()) not in supplied_keys
+        }
+    log(f"Pass B.1: planned {len(roster)} {'gap-filling' if gap_mode else 'shared'} concept(s)")
     return roster
 
 
@@ -1589,6 +1633,7 @@ def label_documents(
     roster_refine: bool = True,
     roster_seed: Mapping[str, str] | None = None,
     schema_seed: Schema | None = None,
+    gap_seed: Mapping[str, str] | None = None,
     vocab: TagVocab | None = None,
     on_label_error: Callable[[str, dict[str, str]], None] | None = None,
     on_off_schema: Callable[[str, Counter[str]], None] | None = None,
@@ -1660,7 +1705,20 @@ def label_documents(
     roster: dict[str, RosterEntry]
     if schema_seed is not None:
         roster = _seed_entries_from_schema(schema_seed)
-        log(f"Pass B.1: seeded roster from schema ({len(roster)} concept(s)); planning skipped")
+        if gap_seed:
+            # Planned additions, decided ONCE for the whole batch by the
+            # caller (convert_batch), because the vocabulary they form has to
+            # govern rendering as well as labeling. They enter PLANNED — not
+            # confirmed, not frozen — so the authored entries keep the
+            # authoritative tier and these render under the softer one.
+            for name, desc in gap_seed.items():
+                roster.setdefault(name, RosterEntry(description=str(desc)))
+            log(
+                f"Pass B.1: seeded roster from schema ({len(schema_seed.tags)} authored "
+                f"+ {len(gap_seed)} planned)"
+            )
+        else:
+            log(f"Pass B.1: seeded roster from schema ({len(roster)} concept(s)); planning skipped")
     elif roster_seed is not None:
         # Legacy flat seed: confirmed (it is a prior run's vocabulary) but not
         # frozen — it carries no examples, so observed ones still enrich it.
@@ -1687,6 +1745,11 @@ def label_documents(
         log(
             f"Pass B: vocabulary EXTENDS {len(vocab.names)} authored tag(s) — reuse is "
             "preferred, and any concept coined for a genuine gap is reported back"
+        )
+    elif vocab.added:
+        log(
+            f"Pass B: vocabulary CLOSED at {len(vocab.supplied)} authored "
+            f"+ {len(vocab.added)} planned tag(s) — nothing outside the two is emitted"
         )
 
     # Pilot staging (unseeded runs only): the LARGEST documents (same sort as
