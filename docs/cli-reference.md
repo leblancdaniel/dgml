@@ -1033,9 +1033,9 @@ information, also written by `docset generate`. Recognized by the `.rnc` suffix.
 | field | required | what it does | reaches the model? |
 |---|---|---|---|
 | **name** | yes | The tag emitted in the DGML, as `<docset:Name>`. | yes, verbatim |
-| **role** / description | no, but recommended | One line describing what the tag holds; what the model matches content against. | yes, first 100 characters |
+| **role** / description | no, but **recommended** | One line describing what the tag holds; what the model matches content against. This is the field worth writing. | yes, first 100 characters |
 | **kind** | no — defaults to `inline` | `section` (a region grouping other content), `row` (a repeating record in a table), `inline` (an atomic value). | yes, as `[section]` / `[row]` / `[value]` |
-| **examples** | no | Representative real values; up to 3 stored. | yes, first 2, 60 characters each |
+| **examples** | no — and **not recommended** | Representative real values; up to 3 stored. Measured on 4 docsets, adding them changed macro F1 by −1.4 (global) / −0.0 (individual) — no gain, and no gain even when the examples were the scored documents' own reference values. Skip them; spend the effort on `role` instead. | yes, first 2, 60 characters each |
 | **parent_role** | no | Name of the tag that contains this one; groups related values under a shared container. Must name a tag the schema declares. | **no** — used deterministically |
 
 **Tag names are taken verbatim.** `Notes`, `Details` and `Line Items` are all
