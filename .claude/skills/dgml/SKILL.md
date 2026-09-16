@@ -421,20 +421,18 @@ next revision. Strict reports the mirror image as `unmatched_concepts` — what 
 had to refuse. The mode is per-run; the schema is remembered, the flag is not.
 
 How much output stays under the user's tags depends on **how much of the
-document the schema covers**, not on tag count — measured across ten docsets,
-schemas of 10/23/24/36 tags gave dominance of 12%/42%/10%/25%, and the same
-36-tag size carried 73–89% on short regular documents but 25% on long dense
-ones. On rich documents extend adds far more than it reuses and
-`added_concepts` gets long: that is the mode working (real recurring roles the
-schema doesn't name), but the output is then mostly not the user's vocabulary.
-To keep it dominant on a dense corpus, grow the schema or use strict.
+document the schema covers**, not on tag count — the same schema can carry most
+of a short regular document and a quarter of a long dense one. On rich
+documents extend adds far more than it reuses and `added_concepts` gets long:
+that is the mode working (real recurring roles the schema doesn't name), but
+the output is then mostly not the user's vocabulary. To keep it dominant on a
+dense corpus, grow the schema or use strict.
 
 Use extend as a **step in a loop, not a standing setting**: the tags it coins
-are unstable run-to-run (measured: 62–82% of coined names appeared in only one
-of four runs of the same documents), so run it, review `added_concepts`, fold
-what you want into the schema, then run strict for output you intend to keep.
-Neither mode improves extraction accuracy over a no-schema run — what a
-supplied schema buys is vocabulary control and determinism.
+are unstable run-to-run, so run it, review `added_concepts`, fold what you want
+into the schema, then run strict for output you intend to keep. Neither mode
+improves extraction accuracy over a no-schema run — what a supplied schema buys
+is vocabulary control.
 
 Four input forms, detected by content:
 
@@ -446,13 +444,9 @@ Four input forms, detected by content:
 - **`full-schema.rnc`** — the same, as commented RELAX NG Compact; the
   human-friendly editing surface, and it reverses losslessly.
 
-Write `role` descriptions; skip `examples`. Measured three ways on 4 docsets
-— realistic values, the scored documents' own reference values, and short
-canonical values with nothing truncated — none beat supplying none, and the
-cleanest test lost 4.8 F1. Per-docset effects vary widely (−13 to +9 at
-N=2), so read this as no measured overall gain rather than never helps. One
-observed mechanism where they hurt: example-bearing tags emptied out while
-example-free containers absorbed their content.
+Write `role` descriptions; skip `examples`. Testing found no benefit, and a
+way they hurt: tags carrying examples get used less while tags without them
+absorb that content — the example reads as a fence rather than a hint.
 
 Tag names are taken **verbatim** — `Notes`, `Details` and `Line Items` all
 survive; only XML-illegal characters become underscores (`Line Items` →

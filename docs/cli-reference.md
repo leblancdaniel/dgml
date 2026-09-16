@@ -968,33 +968,27 @@ vocabulary applied first and a reviewed list of what the documents needed beyond
 it, which you fold into the next revision.
 
 > **How much of the output stays under your tags depends on how much of the
-> document your schema covers** — which is about your documents, not about how
-> many tags you wrote. On short, regular documents a 36-tag schema carried
-> 73–89% of tagged values; on long, dense ones the same size carried 25%, with
-> 265 names coined around it. Tag count alone predicts nothing: measured across
-> ten docsets, schemas of 10, 23, 24 and 36 tags produced dominance of 12%,
-> 42%, 10% and 25% respectively.
+> document your schema covers** — a property of your documents, not of how many
+> tags you wrote. The same schema can carry most of a short, regular document
+> and a quarter of a long, dense one.
 >
-> The practical consequence: on rich documents extend will add far more than it
-> reuses, and `added_concepts` becomes a long list rather than a short one.
-> That is the mode working — those are real recurring roles your schema does
-> not name — but it means the output is mostly not your vocabulary. If you want
-> your vocabulary to dominate a dense corpus, either grow the schema until it
-> covers the document, or use strict and let unmatched content stay untagged.
+> So on rich documents extend adds far more than it reuses, and
+> `added_concepts` gets long. That is the mode working — those are real
+> recurring roles your schema does not name — but the output is then mostly not
+> your vocabulary. To keep it yours on a dense corpus, either grow the schema
+> until it covers the document, or use strict and let unmatched content stay
+> untagged.
 
 > **Extend is an authoring aid, not a setting to leave on.** Your supplied tags
-> are stable across runs by construction; the names it *coins* are not. Measured
-> over four runs of the same documents, 62–82% of coined names appeared in only
-> one of the four — the supplement is close to re-invented each time. That is
-> the tag drift DGML exists to prevent, so treat extend as one step in a loop:
-> run it, review `added_concepts`, fold what you want into your schema, then run
-> strict for output you intend to keep or query.
+> are stable across runs by construction; the names it *coins* are not — the
+> supplement is largely re-invented each run, which is the tag drift DGML exists
+> to prevent. Treat extend as one step in a loop: run it, review
+> `added_concepts`, fold what you want into your schema, then run strict for
+> output you intend to keep or query.
 
-Neither mode is a way to improve extraction accuracy. Measured against a
-no-schema run on gold-annotated docsets, strict scores lower and extend scores
-about the same to lower — never better. What a supplied schema buys is control
-and determinism: your vocabulary, applied consistently, with a report of what
-fell outside it.
+Neither mode is a way to improve extraction accuracy — against a no-schema run
+neither scores better. What a supplied schema buys is control: your vocabulary,
+applied consistently, with a report of what fell outside it.
 
 Neither mode plans a vocabulary of its own, and both keep every downstream pass
 — grounding, semantic links, value typing, table and list consolidation — exactly
@@ -1062,7 +1056,7 @@ information, also written by `docset generate`. Recognized by the `.rnc` suffix.
 | **name** | yes | The tag emitted in the DGML, as `<docset:Name>`. | yes, verbatim |
 | **role** / description | no, but **recommended** | One line describing what the tag holds; what the model matches content against. This is the field worth writing. | yes, first 100 characters |
 | **kind** | no — defaults to `inline` | `section` (a region grouping other content), `row` (a repeating record in a table), `inline` (an atomic value). | yes, as `[section]` / `[row]` / `[value]` |
-| **examples** | no — and **not recommended** | Representative real values; up to 3 stored. Measured three ways on 4 docsets — realistic values, the scored documents' own reference values, and short canonical values with nothing truncated — none beat supplying no examples at all. On the one docset where clean short values covered most tags, F1 fell 4.8 points. Effects vary a lot by docset (−13 to +9 across arms at N=2), so this is "no measured overall gain" rather than "never helps". One mechanism was observed where they hurt: tags carrying examples emptied out while example-free container tags absorbed their content, as if an example were read as a fence rather than a hint. Prefer spending the effort on `role`. | yes, first 2, 60 characters each |
+| **examples** | no — and not recommended | Representative real values; up to 3 stored. Testing found no benefit, and a way they can hurt: tags carrying examples get used less, while tags without them absorb that content — the example reads as a fence rather than a hint. Put the effort into `role` instead. | yes, first 2, 60 characters each |
 | **parent_role** | no | Name of the tag that contains this one; groups related values under a shared container. Must name a tag the schema declares. | **no** — used deterministically |
 
 **Tag names are taken verbatim.** `Notes`, `Details` and `Line Items` are all

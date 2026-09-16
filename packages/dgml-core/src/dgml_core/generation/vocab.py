@@ -98,12 +98,11 @@ class TagVocab:
         """A closed vocabulary of ``supplied + planned``.
 
         This is what makes an extended vocabulary bounded. Coining freely
-        during labeling produced an output vocabulary LARGER than an unseeded
-        run's — 299 tags against 156 on one docset, of which 35 were the
-        user's — because a supplied schema skips the planning pass, leaving
-        labeling to invent per document with nothing looking across documents.
-        Planning the additions up front and then closing over the union keeps
-        the additions a reviewed, bounded set rather than an open tail.
+        during labeling produced an output vocabulary larger than an unseeded
+        run's, most of it not the user's, because a supplied schema skips the
+        planning pass and leaves labeling inventing per document. Planning the
+        additions up front and closing over the union keeps them a reviewed,
+        bounded set rather than an open tail.
         """
         # Squash-aware, not exact-match: an addition that differs from a
         # supplied name only in case or punctuation IS that name — the

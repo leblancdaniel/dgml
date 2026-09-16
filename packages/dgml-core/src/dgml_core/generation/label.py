@@ -150,10 +150,9 @@ def _roster_line(concept: str, entry: RosterEntry, *, confirmed: bool) -> str:
 def _roster_intro(vocab: TagVocab | None) -> str:
     """Which framing the roster is introduced with.
 
-    Three modes, and the wrong one is expensive in both directions: an
-    exhaustive framing on a vocabulary that may grow suppresses labeling, and a
-    merely-suggestive framing on an authored vocabulary lets coined names drown
-    it (both measured — see the editing notes in prompts.yaml).
+    Three modes, and the wrong one is costly either way: an exhaustive framing
+    on a vocabulary that may grow suppresses labeling, and a merely-suggestive
+    framing on an authored one lets coined names drown it.
     """
     if vocab is None:
         return prompt("roster_intro")
@@ -966,12 +965,11 @@ def plan_concept_roster(
     *existing* switches this into GAP-PLANNING mode for a run that already has
     a user-supplied vocabulary but is allowed to add to it
     (``--extend-schema``). The supplied concepts are shown alongside the
-    skeletons and the model is asked for the recurring roles they do NOT cover.
-    This is what gives the additions the same cross-document planning the
-    unseeded path has always had: without it the supplement is invented per
-    document, mid-labeling, with nothing looking across documents — measured,
-    that left 62-82% of coined names appearing in only one of four runs of the
-    same corpus. Returns ONLY the additions; the caller merges them.
+    skeletons and the model is asked for the recurring roles they do NOT cover,
+    which gives the additions the same cross-document planning the unseeded
+    path has always had — without it the supplement is invented per document,
+    mid-labeling, and differs run to run. Returns ONLY the additions; the
+    caller merges them.
     """
     # Cap the planning input. Sample the LARGEST documents (most blocks): a
     # richer skeleton seeds a more complete roster, so the biggest docs cover
@@ -1476,13 +1474,11 @@ def _label_chunk(
         labeled = sum(1 for b in chunk if b.concept)
         # Applies under a closed vocabulary TOO. An earlier version skipped it
         # when closed, reasoning that a small schema legitimately leaves most
-        # blocks untagged so the threshold would fire on every chunk. That was
-        # wrong in the way that matters: measurement showed closed runs
-        # labeling as little as 5% of blocks where the same schema left open
-        # labeled 87%, and this retry is the only thing that detects it. A
-        # correctly-labeling closed run sits far above the threshold, so the
-        # retry stays rare; when it does fire, something is wrong and one extra
-        # call is the cheapest way to find out.
+        # blocks untagged. That was wrong in the way that matters: a closed run
+        # can collapse to labeling almost nothing, and this retry is the only
+        # thing that detects it. A correctly-labeling closed run sits far above
+        # the threshold, so the retry stays rare; when it fires, something is
+        # wrong and one call is the cheapest way to find out.
         if attempt or labeled >= len(chunk) * _MIN_LABELED_FRACTION:
             break
         log(f"[label] {doc_name} {label_tag} under-labeled ({labeled}/{len(chunk)}); retrying")

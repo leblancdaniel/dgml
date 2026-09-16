@@ -312,13 +312,12 @@ def convert_batch(
     # — before labeling, because the vocabulary they form has to govern the
     # render too, and `render_dgml` runs after `label_documents` returns.
     #
-    # Coining freely during labeling produced an output vocabulary LARGER than
-    # an unseeded run's (299 distinct tags against 156 on one docset, of which
-    # 35 were the user's), because supplying a schema skips the planning pass
-    # and leaves labeling inventing per document with nothing looking across
-    # them. One gap-planning call over every skeleton names the shared roles
-    # the schema misses; closing over the union then keeps the additions a
-    # bounded, reviewable set instead of an open tail.
+    # Coining freely during labeling produced an output vocabulary larger than
+    # an unseeded run's, most of it not the user's, because supplying a schema
+    # skips the planning pass and leaves labeling inventing per document. One
+    # gap-planning call over every skeleton names the shared roles the schema
+    # misses; closing over the union keeps the additions a bounded, reviewable
+    # set instead of an open tail.
     gap_seed: dict[str, str] = {}
     if vocab.extends and opts.schema_seed is not None and docs:
         with llm.record_usage_for(label_config):

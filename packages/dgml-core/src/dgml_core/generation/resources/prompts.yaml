@@ -223,14 +223,9 @@
 
   Output JSON only:
   {"concepts": {"<concept>": "<one-line role description>", ...}}
-# Gap planning for --extend-schema. Rationale: supplying a schema used to
-# disable Pass B.1 entirely, which is right under strict (a planned concept
-# would be refused at ingest anyway) but wrong once coining is allowed —
-# it left the supplement to be invented per document, mid-labeling, with
-# nothing looking across documents. Measured, that produced a supplement in
-# which 62-82% of coined names appeared in only one of four runs of the same
-# corpus. This call gives the additions the same cross-document planning the
-# unseeded path has always had.
+# Gap planning for --extend-schema: propose the roles the supplied schema
+# misses, from every document's skeleton at once. Without it the additions
+# get invented per document and differ run to run.
 "plan_gaps_system": |
   You extend an EXISTING concept vocabulary for a set of related documents.
 
@@ -274,14 +269,10 @@
   {"concepts": {"<concept>": "<one-line role description>", ...}}
 "roster_intro": |-
   CONCEPTS ALREADY IN USE in this document set — reuse these names verbatim where the role matches:
-# EDITING NOTE — the closed vocabulary must not make abstention feel free.
-# The first version of this prompt said leaving a block unlabeled "is CORRECT
-# here and costs nothing" while reaching outside the list was "the one thing
-# you must never do", and blanket-overrode the density rules. Measured at N=4
-# on 6 gold docsets, that cost 17.9 points of global exact-match F1 — not
-# because concepts were refused (only 75 uses were) but because the model
-# stopped labeling at all: 5% of blocks tagged where the same schema left open
-# tagged 87%. Keep the prohibition on inventing names; keep density the job.
+# Closing the vocabulary must not also switch off density. An earlier version
+# framed leaving a block unlabeled as free and reaching outside the list as
+# the cardinal sin; the model responded by labeling almost nothing. Forbid
+# inventing names, but keep dense labeling the job.
 "roster_closed_intro": |-
   THE COMPLETE CONCEPT VOCABULARY for this document set. These names are the
   entire palette you have to work with: use them VERBATIM, exactly as spelled
@@ -307,15 +298,10 @@
   is discarded, so it helps nothing.
 
   THE VOCABULARY:
-# EDITING NOTE — the EXTEND vocabulary must stay dominant.
-# This prompt replaced the plain `roster_intro` for authored-schema runs that
-# permit coining. Measured on 6 gold docsets, `roster_intro` in that position
-# put 59-82% of concept-tagged values under names the model COINED rather than
-# the user's own, i.e. the supplied schema became a minority of its own output.
-# The wording below exists to prevent that: reuse is the default action,
-# coining is the exception, and coining a VARIANT of a listed name (the
-# observed failure: CategoryPricing beside a listed CategoryPrice) is the
-# specific mistake to forbid. Keep all three ideas if you re-word it.
+# Used instead of roster_intro when the schema may be added to. The softer
+# wording let coined names crowd out the supplied ones, so three things must
+# survive any rewrite: reuse is the default action, coining is the exception,
+# and coining a variant of a listed name is forbidden.
 "roster_extend_intro": |-
   THE VOCABULARY FOR THIS DOCUMENT SET, supplied by the person who owns these
   documents. It is AUTHORITATIVE: these are the names they want to see, and
