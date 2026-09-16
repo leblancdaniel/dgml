@@ -405,7 +405,7 @@ def test_transcribe_document_is_unconditionally_compact(
 
     monkeypatch.setattr(llm, "call_continued", fake_call_continued)
     monkeypatch.setattr(transcribe_mod, "_count_pages", lambda _b: 1)
-    monkeypatch.setattr(document_mod, "slice_pdf", lambda b, _pages: b)
+    monkeypatch.setattr(document_mod, "slice_pdf", lambda b, _pages, **_kw: b)
 
     blocks = transcribe_mod.transcribe_document(
         b"%PDF-fake",
@@ -2113,7 +2113,7 @@ def test_transcribe_window_gate_retries_early_stopped_window(
     words = [f"word{i:02d}" for i in range(60)]
     pt_dir = _write_page_text(tmp_path, words)
     monkeypatch.setattr(transcribe_mod, "pdf_page_count", lambda _p: 1)
-    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, _idx: b"window-pdf")
+    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, _idx, **_kw: b"window-pdf")
 
     instructions: list[str] = []
 
@@ -2152,7 +2152,7 @@ def test_transcribe_window_gate_no_retry_when_complete_or_ungated(
     words = [f"word{i:02d}" for i in range(60)]
     pt_dir = _write_page_text(tmp_path, words)
     monkeypatch.setattr(transcribe_mod, "pdf_page_count", lambda _p: 1)
-    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, _idx: b"window-pdf")
+    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, _idx, **_kw: b"window-pdf")
 
     calls: list[int] = []
 
@@ -2256,7 +2256,7 @@ def test_transcribe_window_gate_splits_stubborn_window(
             json.dumps({"page": n, "words": [{"t": w} for w in words]})
         )
     monkeypatch.setattr(transcribe_mod, "pdf_page_count", lambda _p: 2)
-    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, idx: bytes(idx))
+    monkeypatch.setattr(document_mod, "slice_pdf", lambda _b, idx, **_kw: bytes(idx))
 
     instructions: list[str] = []
 
