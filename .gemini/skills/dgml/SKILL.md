@@ -406,9 +406,10 @@ Four input forms, detected by content:
 Write `role` descriptions; skip `examples`. Measured three ways on 4 docsets
 — realistic values, the scored documents' own reference values, and short
 canonical values with nothing truncated — none beat supplying none, and the
-cleanest test lost 4.8 F1. An example behaves as a fence rather than a hint:
-content that doesn't resemble it is read as NOT that tag, and the model
-retreats to a broader tag carrying no examples.
+cleanest test lost 4.8 F1. Per-docset effects vary widely (−13 to +9 at
+N=2), so read this as no measured overall gain rather than never helps. One
+observed mechanism where they hurt: example-bearing tags emptied out while
+example-free containers absorbed their content.
 
 Tag names are taken **verbatim** — `Notes`, `Details` and `Line Items` all
 survive; only XML-illegal characters become underscores (`Line Items` →
